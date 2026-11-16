@@ -1,0 +1,39 @@
+# 本地器件资料与安装包：保留在磁盘，不纳入源码仓库
+/datasheet/
+/tools/stlink-driver/
+
+# Keil 构建目录、日志和个人调试状态
+*.uvguix.*
+*.uvgui.*
+*.uvoptx
+*.bak
+*.log
+*.o
+*.obj
+*.d
+*.crf
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+
+# CubeMX 本机生成记录与临时命令
+**/.mxproject
+/MDK-ARM/G474-FOC/
+/MDK-ARM/DebugConfig/
+/MDK-ARM/JLinkSettings.ini
+/MDK-ARM/JLinkLog.txt
+/MXTmpFiles/
+
+# 本地测试、缓存和编辑器状态
+/build/
+/scratch/
+/.venv/
+/.pytest_cache/
+__pycache__/
+*.pyc
+/.vscode/
+/.idea/
+Thumbs.db
+.DS_Store

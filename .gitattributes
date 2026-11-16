@@ -1,0 +1,13 @@
+# 项目文本统一存储为 LF；不强制改写原厂 SDK 的行尾
+* text=auto
+.gitignore text eol=lf
+.gitattributes text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.ioc text eol=lf
+*.uvprojx text eol=lf
+/Drivers/** -text
+/MDK-ARM/startup_*.s -text
