@@ -3,6 +3,7 @@
  * @brief   调试串口实现：把 printf 风格的日志送到 USART3
  */
 #include "bsp_uart.h"
+#include "bsp_perf.h"
 #include "usart.h"
 
 #include <stdarg.h>
@@ -38,8 +39,10 @@ void bsp_uart_task(void)
 {
     if ((s_tx_head != s_tx_tail) && (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_TXE) != RESET))
     {
+        bsp_perf_work_begin();
         huart3.Instance->TDR = s_tx_queue[s_tx_tail];
         s_tx_tail = (s_tx_tail + 1u) % UART_TX_QUEUE_SIZE;
+        bsp_perf_work_end();
     }
 }
 

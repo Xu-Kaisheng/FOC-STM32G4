@@ -22,6 +22,7 @@
 #include "stm32g4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "../../src/bsp/bsp_perf.h"
 #include "../../src/drv/tim_pwm.h"
 /* USER CODE END Includes */
 
@@ -189,10 +190,12 @@ void PendSV_Handler(void)
 void SysTick_Handler(void)
 {
   /* USER CODE BEGIN SysTick_IRQn 0 */
+  bsp_perf_irq_enter_ISR();
 
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
+  bsp_perf_irq_exit_ISR();
 
   /* USER CODE END SysTick_IRQn 1 */
 }

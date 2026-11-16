@@ -570,6 +570,11 @@
               <FilePath>../src/bsp/bsp_uart.c</FilePath>
             </File>
             <File>
+              <FileName>bsp_perf.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../src/bsp/bsp_perf.c</FilePath>
+            </File>
+            <File>
               <FileName>app_board.c</FileName>
               <FileType>1</FileType>
               <FilePath>../platform/app_board.c</FilePath>

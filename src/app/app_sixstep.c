@@ -5,6 +5,7 @@
 #include "app_sixstep.h"
 
 #include "../bsp/bsp_uart.h"
+#include "../bsp/bsp_perf.h"
 #include "../drv/tim_pwm.h"
 #include "../drv/adc_cur.h"
 #include "../drv/adc_vbus.h"
@@ -62,6 +63,7 @@ static uint8_t s_adc_ready = 0u;
  */
 static void apply_step(void)
 {
+    uint32_t perf_start = bsp_perf_control_begin();
     uint8_t hi = s_step_table[s_step][0];
     uint8_t lo = s_step_table[s_step][1];
     float   d[3] = { 0.0f, 0.0f, 0.0f };
@@ -85,6 +87,7 @@ static void apply_step(void)
     // 3) 打开参与导通的两相
     pwm_phase_enable((pwm_phase_t)hi, 1u);
     pwm_phase_enable((pwm_phase_t)lo, 1u);
+    bsp_perf_control_end(BSP_PERF_SIXSTEP, perf_start);
 }
 
 /**
@@ -340,6 +343,8 @@ void app_init(void)
     bsp_uart_printf("\r\nSTM32-FOC v0.1 boot\r\n"
                     "HALL=%s  (send '?' for help)\r\n",
                     hall_state_str(s_last_hall));
+    // 启动校准与自检不混入运行负载窗口。
+    bsp_perf_init();
 }
 
 /**
@@ -354,7 +359,9 @@ void app_task(void)
     bsp_uart_task();
     if (bsp_uart_read(&ch) != 0u)
     {
+        bsp_perf_work_begin();
         handle_cmd(ch);
+        bsp_perf_work_end();
     }
 
     // 模式切换可能等待 200 ms 并重置换相时间，必须在命令处理后重新取时。
@@ -391,8 +398,10 @@ void app_task(void)
         hall_state_t h = hall_read();
         if (h != s_last_hall)
         {
+            bsp_perf_work_begin();
             s_last_hall = h;
             bsp_uart_printf("HALL -> %s\r\n", hall_state_str(h));
+            bsp_perf_work_end();
         }
     }
 
@@ -404,6 +413,9 @@ void app_task(void)
         {
             s_last_hall = hall_read();
         }
+        bsp_perf_work_begin();
         print_status();
+        bsp_perf_work_end();
     }
+    bsp_perf_task();
 }
