@@ -39,3 +39,16 @@ Runtime substitutes can allow drive to exercise six-step/fault paths. Real G474 
 - One project, resolvable source paths/Markdown links; no hardware flashing or measurements during that cleanup checkpoint.
 
 The later user-reported PWM measurement does not establish ADC accuracy or loaded protection.
+
+## 2026-11-17 post-restructure flash validation
+
+- Rebuild: 0 errors/warnings; Code=30904, RO=1488, RW=104, ZI=4608 bytes.
+- J-Link download: Erase/Program/Verify OK, target 3.283 V; the application started automatically.
+- 115200 8N1 over the J-Link CDC UART: boot log `[BOARD] G474RET6 DevEBox / MONITOR ONLY`, `STM32-FOC v0.1 boot`, `HALL=INV`; `?` help works; `1` returns `[LOCK] Board wiring not verified, monitor only` and the bridge stays off.
+- DMA log transmission and command reception work; no truncated long lines observed.
+- Bus voltage reads about 22.2–22.4 V (raw 1099–1113); the scaling path is alive.
+- Phase-current raw values are about 362/445/985, displayed as -7.9/-7.4/-3.8 A, far from the expected 1.25 V (raw≈1551) zero-current offset. The current-sense chain is not at its expected zero; **do not treat these as valid currents** and do not enable the bridge before checking wiring and offset.
+- Hall reads `INV` (000/111), consistent with no motor/Hall wiring attached.
+- Performance accounting works while J-Link is attached (CPU work≈55.8%, irq≈0.53 ms/s); after J-Link disconnects it permanently reports `[PERF] unavailable`, i.e. DWT counting depends on the debug domain on this board. Follow-up: check DBGMCU/debug clock or use a timer timebase for standalone statistics.
+
+Not performed: loaded bridge operation, PWM waveform recheck, synchronous current sampling, or current limiting. These results do not replace power-stage acceptance.

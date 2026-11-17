@@ -19,6 +19,7 @@ The only configuration source is `G474-FOC.ioc`. Tools: CubeMX 6.16.1, STM32Cube
 | ADC4 | PB12 / IN3, bus divider |
 | ADC common | Independent mode; SYSCLK/4=42.5 MHz; 12-bit right-aligned; 247.5 sampling cycles; one regular channel per ADC; software trigger |
 | USART3 | PB10 TX / PB11 RX, 115200 8N1 |
+| DMA | DMA1_Channel2, DMAMUX request USART3_TX, NORMAL, byte, memory increment; DMA1_Channel2 and USART3 IRQ preemption priority 15 |
 | Debug | PA13 SWDIO / PA14 SWCLK |
 
 PA8/PA9/PA10 are TIM1_CH1/2/3 at AF6. PB13/PB14 are CH1N/2N at AF6; **PB15 CH3N uses AF4**. See [hardware](01-hardware-and-wiring.md) and [board guide](11-g474-board-guide.md).
@@ -29,8 +30,10 @@ DTG=149 gives `(64+21)×2/170 MHz=1 µs`. One ADC conversion theoretically takes
 
 1. Change `.ioc` and regenerate with CubeMX; do not hand-edit generated regions.
 2. Preserve application, emergency shutdown, and SysTick performance hooks in Core USER CODE regions.
-3. Keep `src/app`, `src/drv`, `src/bsp`, and `platform` sources in the Keil project.
+3. Keep all sources under `src/app` and `src/bsp` in the Keil project (see [13-repo-restructure.md](13-repo-restructure.md)).
 4. Protect HAL/CMSIS, startup assembly, and compiler options; do not hand-edit SDK files.
 5. Rebuild and review errors/warnings. Remeasure hardware timing after timing changes.
+
+The USART3 DMA is generated only by CubeMX (`Core/Src/dma.c` and `hdma_usart3_tx` in `HAL_UART_MspInit()`); the driver never enables the DMA clock by hand. Interrupt priority 15 keeps the UART from preempting a future current loop.
 
 Bridge enable and boot self-test are disabled. The temporary waveform demo has been tested and disabled. Synchronized ADC triggering, current-control interrupts, and fast protection remain pending.

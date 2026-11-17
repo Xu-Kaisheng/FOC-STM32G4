@@ -80,4 +80,6 @@ HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef *h, uint32_t timeo
 uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef *h);
 HAL_StatusTypeDef HAL_ADC_Stop(ADC_HandleTypeDef *h);
 HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef *h, uint8_t *out, uint16_t size, uint32_t timeout);
+HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, const uint8_t *data, uint16_t size);
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *h);
 #endif

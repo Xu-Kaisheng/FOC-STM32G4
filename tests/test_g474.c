@@ -4,7 +4,7 @@
 #include "adc.h"
 #include "adc_cur.h"
 #include "adc_vbus.h"
-#include "app_board.h"
+#include "board.h"
 
 static ADC_TypeDef s_instances[4];
 ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4;
@@ -53,22 +53,22 @@ int32_t main(void)
     adc_vbus_sample_t bus = {0};
     hadc1.Instance = &s_instances[0]; hadc2.Instance = &s_instances[1];
     hadc3.Instance = &s_instances[2]; hadc4.Instance = &s_instances[3];
-    assert(adc_cur_read(&cur) == 0u && adc_vbus_read(&bus) == 0u);
-    assert(adc_cur_init() == 1u && adc_vbus_init() == 1u);
-    assert(adc_cur_read(NULL) == 0u && adc_vbus_read(NULL) == 0u);
-    assert(adc_cur_read(&cur) == 1u && s_seen == 7u);
+    assert(bsp_adc_cur_read(&cur) == 0u && bsp_adc_vbus_read(&bus) == 0u);
+    assert(bsp_adc_cur_init() == 1u && bsp_adc_vbus_init() == 1u);
+    assert(bsp_adc_cur_read(NULL) == 0u && bsp_adc_vbus_read(NULL) == 0u);
+    assert(bsp_adc_cur_read(&cur) == 1u && s_seen == 7u);
     assert(cur.raw[0] == 1551u && cur.iv > 0.0f && cur.iw < 0.0f);
     s_seen = 0u;
-    assert(adc_vbus_read(&bus) == 1u && s_seen == 8u);
+    assert(bsp_adc_vbus_read(&bus) == 1u && s_seen == 8u);
     assert(bus.raw == 1192u && bus.voltage > 24.0f && bus.voltage < 24.02f);
     s_raw[3] = 0u;
-    assert(adc_vbus_read(&bus) == 1u && bus.voltage == 0.0f);
+    assert(bsp_adc_vbus_read(&bus) == 1u && bus.voltage == 0.0f);
     s_raw[3] = 4095u;
-    assert(adc_vbus_read(&bus) == 1u && bus.voltage > 82.47f && bus.voltage < 82.5f);
+    assert(bsp_adc_vbus_read(&bus) == 1u && bus.voltage > 82.47f && bus.voltage < 82.5f);
     s_raw[3] = 4096u;
-    assert(adc_vbus_read(&bus) == 0u && bus.raw == 4095u);
+    assert(bsp_adc_vbus_read(&bus) == 0u && bus.raw == 4095u);
     s_raw[3] = 1192u;
-    assert(adc_vbus_read(&bus) == 1u);
+    assert(bsp_adc_vbus_read(&bus) == 1u);
     previous = cur;
     for (uint32_t i = 0u; i < 3u; i++)
     {
@@ -76,27 +76,27 @@ int32_t main(void)
         for (uint32_t stage = 2u; stage <= 4u; stage++)
         {
             s_failure = stage; s_stops = 0u;
-            assert(adc_cur_read(&cur) == 0u);
+            assert(bsp_adc_cur_read(&cur) == 0u);
             assert(cur.iu == previous.iu && cur.iv == previous.iv && cur.iw == previous.iw);
             assert(cur.raw[0] == previous.raw[0] && cur.raw[1] == previous.raw[1] && cur.raw[2] == previous.raw[2]);
             if (stage == 3u) { assert(s_stops == i + 1u); }
         }
         s_failure = 1u;
-        assert(adc_cur_init() == 0u && adc_cur_read(&cur) == 0u);
-        s_failure = 0u; assert(adc_cur_init() == 1u);
+        assert(bsp_adc_cur_init() == 0u && bsp_adc_cur_read(&cur) == 0u);
+        s_failure = 0u; assert(bsp_adc_cur_init() == 1u);
     }
-    s_raw[2] = 4096u; assert(adc_cur_read(&cur) == 0u && cur.iw == previous.iw);
+    s_raw[2] = 4096u; assert(bsp_adc_cur_read(&cur) == 0u && cur.iw == previous.iw);
     s_fail_index = 3u;
     for (uint32_t stage = 2u; stage <= 4u; stage++)
     {
         s_failure = stage;
-        assert(adc_vbus_read(&bus) == 0u && bus.raw == 1192u);
+        assert(bsp_adc_vbus_read(&bus) == 0u && bus.raw == 1192u);
     }
     s_failure = 1u;
-    assert(adc_vbus_init() == 0u && adc_vbus_read(&bus) == 0u);
-    assert(app_board_drive_allowed() == 0u && app_board_boot_test() == 0u);
-    assert(app_board_pwm_arr() == 4250u && app_board_deadtime_dtg() == 149u);
-    assert(app_board_millis() == 123u);
+    assert(bsp_adc_vbus_init() == 0u && bsp_adc_vbus_read(&bus) == 0u);
+    assert(bsp_board_get_drive_allowed() == 0u && bsp_board_get_boot_test() == 0u);
+    assert(bsp_board_get_pwm_arr() == 4250u && bsp_board_get_deadtime_dtg() == 149u);
+    assert(bsp_board_get_millis() == 123u);
     puts("PASS: G474 ADC1/2/3 complete diagnostics, ADC4 VBUS, monitor-only board policy");
     return 0;
 }

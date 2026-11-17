@@ -24,6 +24,7 @@ The firmware currently provides bridge-off diagnostics. The user reported 990 ns
 | 10 | [ADC4 bus-voltage monitoring](en/10-bus-voltage-adc.md) | [ADC4 母线电压采集](zh-CN/10-bus-voltage-adc.md) | Monitoring only / 仅监视 |
 | 11 | [G474 board guide](en/11-g474-board-guide.md) | [G474 工程与接线核验](zh-CN/11-g474-board-guide.md) | Board and measured PWM / 板卡及 PWM 实测 |
 | 12 | [Performance monitoring](en/12-performance-monitoring.md) | [控制耗时与 CPU 负载统计](zh-CN/12-performance-monitoring.md) | Implemented / 已实现 |
+| 13 | [Repository restructure](en/13-repo-restructure.md) | [仓库结构重构](zh-CN/13-repo-restructure.md) | Implemented / 已实施 |
 
 ## Maintaining translations / 双语维护
 

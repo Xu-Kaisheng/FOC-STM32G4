@@ -6,7 +6,7 @@ G474 runs at 170 MHz with nominal 20 kHz PWM. Performance accounting exists; cur
 
 ## 1. CPU load and control timing
 
-`bsp_perf` uses DWT to account for the union of marked work and instrumented interrupt time and to time control tasks. The main loop reports once per second. Without current-loop calls, it reports `CURRENT=OFF`. See [performance monitoring](12-performance-monitoring.md) for exact definitions, wrap handling, and limitations.
+`app/perf` uses DWT to account for the union of marked work and instrumented interrupt time and to time control tasks. The main loop reports once per second. Without current-loop calls, it reports `CURRENT=OFF`. See [performance monitoring](12-performance-monitoring.md) for exact definitions, wrap handling, and limitations.
 
 At 170 MHz the 32-bit counter wraps after about 25.26 s; reporting windows are about 1 s. Target current ISR time is <15 µs, with a hard deadline <50 µs. Average effective load does not replace worst-case execution validation.
 

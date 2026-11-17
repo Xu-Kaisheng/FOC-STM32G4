@@ -19,14 +19,15 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "dma.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "../../src/app/app_sixstep.h"
-#include "../../src/drv/tim_pwm.h"
+#include "app.h"
+#include "pwm.h"
 
 /* USER CODE END Includes */
 
@@ -91,6 +92,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
   MX_ADC3_Init();
@@ -171,7 +173,7 @@ void SystemClock_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  pwm_emergency_stop();
+  bsp_pwm_stop_emergency();
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)

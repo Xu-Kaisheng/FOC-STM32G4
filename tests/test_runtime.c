@@ -5,16 +5,20 @@
 #include "main.h"
 #include "adc_cur.h"
 #include "adc_vbus.h"
-#include "tim_pwm.h"
+#include "pwm.h"
 #include "hall.h"
-#include "bsp_uart.h"
-#include "app_sixstep.h"
-#include "app_board.h"
+#include "uart.h"
+#include "app.h"
+#include "app_log.h"
+#include "board.h"
 
 GPIO_TypeDef test_gpioc;
 TIM_TypeDef test_tim1;
 static ADC_TypeDef s_adcs[4];
 static USART_TypeDef s_uart;
+static char s_tx_capture[1024];
+static uint32_t s_tx_length;
+static uint8_t s_tx_dma_busy;
 ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4;
 TIM_HandleTypeDef htim1;
 UART_HandleTypeDef huart3;
@@ -47,7 +51,9 @@ static void reset_hardware(void)
     test_tim1.BDTR = 149u | TIM_BDTR_OSSI | TIM_BDTR_OSSR | TIM_BDTR_AOE;
     test_tim1.CCMR1 = TIM_OCMODE_PWM1 | (TIM_OCMODE_PWM1 << 8u) | TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE;
     test_tim1.CCMR2 = TIM_OCMODE_PWM1 | TIM_CCMR2_OC3PE;
-    s_uart.ISR = UART_FLAG_TXE;
+    s_uart.ISR = 0u;
+    s_tx_length = 0u;
+    s_tx_dma_busy = 0u;
     s_calibration = s_start = s_poll = s_stop = HAL_OK;
     s_vbus_calibration = s_vbus_start = s_vbus_poll = s_vbus_stop = HAL_OK;
     s_vbus_raw = 1192u;
@@ -89,7 +95,7 @@ uint32_t HAL_GetTick(void)
         assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
         if ((test_tim1.CR1 & TIM_CR1_CEN) != 0u)
         {
-            assert(pwm_check_ready() == 1u);
+            assert(bsp_pwm_check_ready() == 1u);
             assert(test_tim1.CCR1 == 2125u && test_tim1.CCR2 == 2125u && test_tim1.CCR3 == 2125u);
             s_boot_pwm_ticks++;
         }
@@ -104,19 +110,19 @@ void HAL_Delay(uint32_t delay)
 }
 
 /** @brief 测试板名，与生产板级实现分离。 */
-const char *app_board_name(void) { return "TEST"; }
+const char *bsp_board_get_name(void) { return "TEST"; }
 /** @brief 接入可控测试时基。 */
-uint32_t app_board_millis(void) { return HAL_GetTick(); }
+uint32_t bsp_board_get_millis(void) { return HAL_GetTick(); }
 /** @brief 验证模式切换先关桥再等待。 */
-void app_board_delay(uint32_t ms) { HAL_Delay(ms); }
+void bsp_board_delay_ms(uint32_t ms) { HAL_Delay(ms); }
 /** @brief 使用 G474 基线参数。 */
-uint32_t app_board_pwm_arr(void) { return 4250u; }
+uint32_t bsp_board_get_pwm_arr(void) { return 4250u; }
 /** @brief 使用 G474 硬件死区参数。 */
-uint32_t app_board_deadtime_dtg(void) { return 149u; }
+uint32_t bsp_board_get_deadtime_dtg(void) { return 149u; }
 /** @brief 诊断板禁用上电自检，测试驱动许可开启时覆盖原有自检路径。 */
-uint8_t app_board_boot_test(void) { return s_board_allow; }
+uint8_t bsp_board_get_boot_test(void) { return s_board_allow; }
 /** @brief 模拟 G474 未核验接线的开桥禁用状态。 */
-uint8_t app_board_drive_allowed(void) { return s_board_allow; }
+uint8_t bsp_board_get_drive_allowed(void) { return s_board_allow; }
 
 /** @brief 将错误注入 G474 的 ADC1/2/3 或独立 ADC4。 */
 HAL_StatusTypeDef HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *h, uint32_t mode)
@@ -156,6 +162,25 @@ HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef *h, uint8_t *out, uint16_t
     return HAL_OK;
 }
 
+/** @brief 模拟 USART3 TX DMA：记录要发送的数据，由测试决定何时完成。 */
+HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, const uint8_t *data, uint16_t size)
+{
+    assert(h == &huart3);
+    if (s_tx_dma_busy != 0u) { return HAL_BUSY; }
+    assert(s_tx_length + (uint32_t)size <= sizeof(s_tx_capture));
+    s_tx_dma_busy = 1u;
+    memcpy(&s_tx_capture[s_tx_length], data, size);
+    s_tx_length += (uint32_t)size;
+    return HAL_OK;
+}
+
+/** @brief 模拟 DMA 完成：清忙标志并触发 HAL 的发送完成回调。 */
+static void uart_dma_finish(void)
+{
+    s_tx_dma_busy = 0u;
+    HAL_UART_TxCpltCallback(&huart3);
+}
+
 /** @brief 验证六步合法组合和异常配置均不能绕过联锁。 */
 static void test_pwm(void)
 {
@@ -164,36 +189,36 @@ static void test_pwm(void)
         for (uint32_t low = 0u; low < 3u; low++)
         {
             if (high == low) { continue; }
-            reset_hardware(); pwm_init(); pwm_start();
-            assert(pwm_check_ready() == 1u);
-            pwm_phase_enable((pwm_phase_t)(3u - high - low), 0u);
-            assert(pwm_check_ready() == 0u && pwm_bridge_enable(1u) == 0u);
-            assert(pwm_bridge_enable_sixstep((pwm_phase_t)high, (pwm_phase_t)low) == 1u);
-            assert(pwm_bridge_is_enabled() == 1u && test_tim1.EGR == TIM_EGR_UG);
+            reset_hardware(); bsp_pwm_init(); bsp_pwm_start();
+            assert(bsp_pwm_check_ready() == 1u);
+            bsp_pwm_enable_phase((pwm_phase_t)(3u - high - low), 0u);
+            assert(bsp_pwm_check_ready() == 0u && bsp_pwm_enable_bridge(1u) == 0u);
+            assert(bsp_pwm_enable_bridge_sixstep((pwm_phase_t)high, (pwm_phase_t)low) == 1u);
+            assert(bsp_pwm_is_bridge_enabled() == 1u && test_tim1.EGR == TIM_EGR_UG);
             test_tim1.CCER &= ~(TIM_CCER_CC1NE << (high * 4u));
-            assert(pwm_bridge_enable_sixstep((pwm_phase_t)high, (pwm_phase_t)low) == 0u);
+            assert(bsp_pwm_enable_bridge_sixstep((pwm_phase_t)high, (pwm_phase_t)low) == 0u);
             assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
         }
     }
-    reset_hardware(); pwm_init(); pwm_start();
-    assert(pwm_bridge_enable_sixstep(PHASE_U, PHASE_V) == 0u);
+    reset_hardware(); bsp_pwm_init(); bsp_pwm_start();
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
     test_tim1.BDTR = (test_tim1.BDTR & ~TIM_BDTR_DTG) | 1u;
-    assert(pwm_bridge_enable(1u) == 0u);
+    assert(bsp_pwm_enable_bridge(1u) == 0u);
     test_tim1.BDTR = (test_tim1.BDTR & ~TIM_BDTR_DTG) | 149u;
     test_tim1.CCER |= TIM_CCER_CC1P;
-    assert(pwm_bridge_enable(1u) == 0u);
+    assert(bsp_pwm_enable_bridge(1u) == 0u);
     test_tim1.CCER &= ~TIM_CCER_CC1P;
     test_tim1.PSC = 1u;
-    assert(pwm_bridge_enable(1u) == 0u);
+    assert(bsp_pwm_enable_bridge(1u) == 0u);
     test_tim1.PSC = 0u;
     test_tim1.CCMR1 &= ~TIM_CCMR1_OC1PE;
-    assert(pwm_bridge_enable(1u) == 0u);
-    assert(pwm_bridge_enable_sixstep(PHASE_U, PHASE_U) == 0u);
-    assert(pwm_bridge_enable_sixstep((pwm_phase_t)99, PHASE_V) == 0u);
-    reset_hardware(); pwm_init(); pwm_start();
-    assert(pwm_bridge_enable(1u) == 1u);
-    pwm_emergency_stop();
-    assert(test_gpioc.BRR == CTRL_SD_Pin && pwm_bridge_is_enabled() == 0u);
+    assert(bsp_pwm_enable_bridge(1u) == 0u);
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_U) == 0u);
+    assert(bsp_pwm_enable_bridge_sixstep((pwm_phase_t)99, PHASE_V) == 0u);
+    reset_hardware(); bsp_pwm_init(); bsp_pwm_start();
+    assert(bsp_pwm_enable_bridge(1u) == 1u);
+    bsp_pwm_stop_emergency();
+    assert(test_gpioc.BRR == CTRL_SD_Pin && bsp_pwm_is_bridge_enabled() == 0u);
     assert((test_tim1.BDTR & (TIM_BDTR_MOE | TIM_BDTR_AOE)) == 0u);
     assert((test_tim1.CCER & 0x555u) == 0u && (test_tim1.CR1 & TIM_CR1_CEN) == 0u);
 }
@@ -204,66 +229,77 @@ static void test_hall(void)
     const hall_state_t sequence[] = { HALL_S1, HALL_S3, HALL_S2, HALL_S6, HALL_S4, HALL_S5 };
     for (uint32_t i = 0u; i < 6u; i++)
     {
-        float next = hall_sector_deg(sequence[(i + 1u) % 6u]);
-        float delta = next - hall_sector_deg(sequence[i]);
-        float reverse = hall_sector_deg(sequence[(i + 5u) % 6u]) - hall_sector_deg(sequence[i]);
+        float next = bsp_hall_get_sector_deg(sequence[(i + 1u) % 6u]);
+        float delta = next - bsp_hall_get_sector_deg(sequence[i]);
+        float reverse = bsp_hall_get_sector_deg(sequence[(i + 5u) % 6u]) - bsp_hall_get_sector_deg(sequence[i]);
         assert((delta == 60.0f) || (delta == -300.0f));
         assert((reverse == -60.0f) || (reverse == 300.0f));
         test_gpioc.IDR = (((uint32_t)sequence[i] >> 2u) & 1u) << 6u;
         test_gpioc.IDR |= (((uint32_t)sequence[i] >> 1u) & 1u) << 7u;
         test_gpioc.IDR |= ((uint32_t)sequence[i] & 1u) << 8u;
-        assert(hall_read() == sequence[i]);
+        assert(bsp_hall_read() == sequence[i]);
     }
-    assert(hall_sector_deg((hall_state_t)99) == 0.0f);
+    assert(bsp_hall_get_sector_deg((hall_state_t)99) == 0.0f);
     test_gpioc.IDR = GPIO_PIN_6 | GPIO_PIN_7 | GPIO_PIN_8;
-    assert(hall_read() == HALL_INVALID);
+    assert(bsp_hall_read() == HALL_INVALID);
 }
 
-/** @brief 验证发送不阻塞、队列回绕和队列满时整条丢弃。 */
-static void test_uart(void)
+/** @brief 验证 DMA 发送不阻塞、忙时不重复启动、队列回绕及满时整条丢弃。 */
+static void test_log(void)
 {
-    reset_hardware(); bsp_uart_init();
-    bsp_uart_printf("AB");
-    s_uart.ISR = 0u; s_uart.TDR = 255u;
-    bsp_uart_task(); assert(s_uart.TDR == 255u);
-    s_uart.ISR = UART_FLAG_TXE;
-    bsp_uart_task(); assert(s_uart.TDR == 'A');
-    bsp_uart_task(); assert(s_uart.TDR == 'B');
-    for (uint32_t i = 0u; i < 600u; i++)
-    {
-        bsp_uart_printf("X"); bsp_uart_task(); assert(s_uart.TDR == 'X');
-    }
-    for (uint32_t i = 0u; i < 511u; i++) { bsp_uart_printf("Y"); }
-    bsp_uart_printf("DROP");
-    for (uint32_t i = 0u; i < 511u; i++) { bsp_uart_task(); assert(s_uart.TDR == 'Y'); }
-    s_uart.TDR = 255u; bsp_uart_task(); assert(s_uart.TDR == 255u);
+    reset_hardware(); bsp_uart_init(); app_log_init();
+
+    app_log_write("AB");
+    app_log_task();
+    assert(s_tx_length == 2u && memcmp(s_tx_capture, "AB", 2u) == 0);
+    // DMA 忙时再次调用不得启动第二次传输，也不得丢数据。
+    app_log_task();
+    assert(s_tx_length == 2u);
+    uart_dma_finish();
+    app_log_task();
+    assert(s_tx_length == 2u);
+
+    // 队列刚好装满 511 字节（跨缓冲区末尾），随后一条 4 字节日志必须整条丢弃。
+    for (uint32_t i = 0u; i < 511u; i++) { app_log_write("Y"); }
+    app_log_write("DROP");
+    s_tx_length = 0u;
+    app_log_task();
+    // 第一段只能发到缓冲区末尾；剩余 1 字节在下一轮发出。
+    assert(s_tx_length == 510u);
+    uart_dma_finish();
+    app_log_task();
+    assert(s_tx_length == 511u);
+    for (uint32_t i = 0u; i < 511u; i++) { assert(s_tx_capture[i] == 'Y'); }
+    uart_dma_finish();
+    app_log_task();
+    assert(s_tx_length == 511u);
 }
 
 /** @brief 验证实际应用启动、反转、停机及 ADC 故障锁存。 */
 static void test_application(void)
 {
     reset_hardware(); app_init();
-    assert(pwm_bridge_is_enabled() == 0u);
-    s_rx = '1'; app_task(); assert(pwm_bridge_is_enabled() == 1u);
-    s_rx = '2'; app_task(); assert(pwm_bridge_is_enabled() == 1u);
-    s_rx = '0'; app_task(); assert(pwm_bridge_is_enabled() == 0u);
-    s_rx = '1'; app_task(); assert(pwm_bridge_is_enabled() == 1u);
+    assert(bsp_pwm_is_bridge_enabled() == 0u);
+    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
+    s_rx = '2'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
+    s_rx = '0'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
+    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
     s_poll = HAL_TIMEOUT; s_tick += 1000u; app_task();
-    assert(pwm_bridge_is_enabled() == 0u);
+    assert(bsp_pwm_is_bridge_enabled() == 0u);
     s_poll = HAL_OK; s_rx = '1'; app_task();
-    assert(pwm_bridge_is_enabled() == 0u);
+    assert(bsp_pwm_is_bridge_enabled() == 0u);
     reset_hardware(); s_calibration = HAL_ERROR; app_init();
-    s_rx = '1'; app_task(); assert(pwm_bridge_is_enabled() == 0u);
+    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
     reset_hardware(); s_vbus_calibration = HAL_ERROR; app_init();
-    s_rx = '1'; app_task(); assert(pwm_bridge_is_enabled() == 0u);
+    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
     reset_hardware(); s_vbus_start = HAL_ERROR; app_init();
-    s_rx = '1'; app_task(); assert(pwm_bridge_is_enabled() == 0u);
+    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
     reset_hardware(); app_init();
-    s_rx = '1'; app_task(); assert(pwm_bridge_is_enabled() == 1u);
+    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
     s_vbus_poll = HAL_TIMEOUT; s_tick += 1000u; app_task();
-    assert(pwm_bridge_is_enabled() == 0u);
+    assert(bsp_pwm_is_bridge_enabled() == 0u);
     s_vbus_poll = HAL_OK; s_rx = '1'; app_task();
-    assert(pwm_bridge_is_enabled() == 0u);
+    assert(bsp_pwm_is_bridge_enabled() == 0u);
 }
 
 /** @brief 未核验板卡的应用命令与驱动接口均不能输出功率。 */
@@ -275,21 +311,21 @@ static void test_monitor_only(void)
     assert((test_tim1.BDTR & TIM_BDTR_MOE) == 0u && test_tim1.CCER == 0u);
     assert(test_tim1.CCR1 == 0u && test_tim1.CCR2 == 0u && test_tim1.CCR3 == 0u);
     assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u);
-    s_rx = '1'; app_task(); assert(pwm_bridge_is_enabled() == 0u);
+    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
     assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u);
-    s_rx = '2'; app_task(); assert(pwm_bridge_is_enabled() == 0u);
-    pwm_start();
-    assert(pwm_check_ready() == 1u);
-    assert(pwm_bridge_enable(1u) == 0u);
-    pwm_phase_enable(PHASE_W, 0u);
-    assert(pwm_bridge_enable_sixstep(PHASE_U, PHASE_V) == 0u);
+    s_rx = '2'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
+    bsp_pwm_start();
+    assert(bsp_pwm_check_ready() == 1u);
+    assert(bsp_pwm_enable_bridge(1u) == 0u);
+    bsp_pwm_enable_phase(PHASE_W, 0u);
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
     assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
 }
 
 /** @brief 回归测试入口。 */
 int32_t main(void)
 {
-    test_pwm(); test_hall(); test_uart(); test_application(); test_monitor_only();
-    puts("PASS: G474 PWM interlocks, Hall, UART queue, application startup/fault latch");
+    test_pwm(); test_hall(); test_log(); test_application(); test_monitor_only();
+    puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }

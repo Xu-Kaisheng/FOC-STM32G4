@@ -115,13 +115,13 @@ R11/R10 connect the rail to VDDA/VREF+. If actual supply is 3.0 V while scaling 
 STM32-FOC.uvmpw              Single Keil entry
 G474-FOC.ioc                 CubeMX source
 Core/ Drivers/ MDK-ARM/      Generated setup, vendor SDK, Keil
-src/app/                    Modes, commands, board API
-src/drv/                    PWM/Hall and ADC interfaces
-src/bsp/                    UART and performance
-platform/                   Board policy and ADC implementations
+src/app/                    Application: app/, cmd/, control/, log/, perf/, status/
+src/algorithm/              Pure algorithms: sixstep/, foc/
+src/third_party/            External libraries (reserved)
+src/bsp/                    Board layer: board/, pwm/, hall/, adc_cur/, adc_vbus/, uart/, time/
 ```
 
-The application does not access HAL ADC handles. Regeneration must preserve source entries and USER CODE application, emergency-stop, and performance hooks.
+The application does not access HAL ADC handles. Regeneration must preserve the `src/app` and `src/bsp` entries and the USER CODE application, emergency-stop, and performance hooks. Layout and dependency rules: [13-repo-restructure.md](13-repo-restructure.md).
 
 ## Configuration and measured PWM test
 

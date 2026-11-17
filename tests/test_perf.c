@@ -4,8 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "main.h"
-#include "bsp_perf.h"
-#include "bsp_uart.h"
+#include "perf.h"
+#include "app_log.h"
 
 #define TEST_HZ 170000000u
 #define TEST_CYCLES_PER_US 170u
@@ -16,7 +16,7 @@ static char s_log[2048];
 uint32_t HAL_GetTick(void) { return s_tick; }
 
 /** @brief 捕获实际格式化输出，同时验证每条日志不会被串口缓冲截断。 */
-void bsp_uart_printf(const char *fmt, ...)
+void app_log_write(const char *fmt, ...)
 {
     va_list args;
     char line[256];
@@ -38,7 +38,7 @@ static uint32_t start_clock(uint32_t start)
     test_dwt_running = 1u;
     s_tick = 0u;
     s_log[0] = '\0';
-    bsp_perf_init();
+    app_perf_init();
     assert(test_primask == 0u);
     assert((test_dwt.CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0u);
     return test_dwt.CYCCNT;
@@ -47,72 +47,72 @@ static uint32_t start_clock(uint32_t start)
 /** @brief 验证空轮询不算工作，嵌套工作/中断按并集计算。 */
 static void test_union(void)
 {
-    bsp_perf_snapshot_t snap;
+    app_perf_snapshot_t snap;
     uint32_t base = start_clock(0u);
     test_dwt.CYCCNT = base + 10u;
-    bsp_perf_work_begin();
+    app_perf_begin_work();
     test_dwt.CYCCNT = base + 20u;
-    bsp_perf_irq_enter_ISR();
+    app_perf_enter_irq();
     test_dwt.CYCCNT = base + 30u;
-    bsp_perf_irq_enter_ISR();
+    app_perf_enter_irq();
     test_dwt.CYCCNT = base + 40u;
-    bsp_perf_irq_exit_ISR();
+    app_perf_exit_irq();
     test_dwt.CYCCNT = base + 50u;
-    bsp_perf_irq_exit_ISR();
+    app_perf_exit_irq();
     test_dwt.CYCCNT = base + 60u;
-    bsp_perf_work_end();
+    app_perf_end_work();
     test_dwt.CYCCNT = base + 70u;
-    bsp_perf_irq_enter_ISR();
+    app_perf_enter_irq();
     test_dwt.CYCCNT = base + 80u;
-    bsp_perf_irq_exit_ISR();
+    app_perf_exit_irq();
     test_dwt.CYCCNT = base + 100u;
-    assert(bsp_perf_snapshot(&snap) == 1u);
+    assert(app_perf_get_snapshot(&snap) == 1u);
     assert(snap.elapsed_cycles == 100u && snap.work_cycles == 60u && snap.irq_cycles == 40u);
-    assert(snap.control[BSP_PERF_CURRENT].count == 0u);
+    assert(snap.control[APP_PERF_CURRENT].count == 0u);
     test_dwt.CYCCNT += 100u;
-    assert(bsp_perf_snapshot(&snap) == 1u && snap.work_cycles == 0u && snap.irq_cycles == 0u);
+    assert(app_perf_get_snapshot(&snap) == 1u && snap.work_cycles == 0u && snap.irq_cycles == 0u);
     // 快照跨越尚未结束的前台任务，下一窗口从快照位置续算。
-    bsp_perf_work_begin();
+    app_perf_begin_work();
     test_dwt.CYCCNT += 30u;
     test_primask = 1u;
-    assert(bsp_perf_snapshot(&snap) == 1u && snap.work_cycles == 30u);
+    assert(app_perf_get_snapshot(&snap) == 1u && snap.work_cycles == 30u);
     assert(test_primask == 1u);
     test_primask = 0u;
     test_dwt.CYCCNT += 20u;
-    bsp_perf_work_end();
+    app_perf_end_work();
     test_dwt.CYCCNT += 50u;
-    assert(bsp_perf_snapshot(&snap) == 1u && snap.work_cycles == 20u && snap.elapsed_cycles == 70u);
+    assert(app_perf_get_snapshot(&snap) == 1u && snap.work_cycles == 20u && snap.elapsed_cycles == 70u);
 }
 
 /** @brief 验证一次自然回绕、50 us 临界值与抢占响应时间。 */
 static void test_control(void)
 {
-    bsp_perf_snapshot_t snap;
+    app_perf_snapshot_t snap;
     uint32_t base = start_clock(UINT32_MAX - 100u);
-    uint32_t mark = bsp_perf_control_begin();
+    uint32_t mark = app_perf_begin_control();
     test_dwt.CYCCNT += 10u * TEST_CYCLES_PER_US;
-    bsp_perf_irq_enter_ISR();
+    app_perf_enter_irq();
     test_dwt.CYCCNT += 5u * TEST_CYCLES_PER_US;
-    bsp_perf_irq_exit_ISR();
+    app_perf_exit_irq();
     test_dwt.CYCCNT += 5u * TEST_CYCLES_PER_US;
-    bsp_perf_control_end(BSP_PERF_CURRENT, mark);
-    mark = bsp_perf_control_begin();
+    app_perf_end_control(APP_PERF_CURRENT, mark);
+    mark = app_perf_begin_control();
     test_dwt.CYCCNT += 50u * TEST_CYCLES_PER_US;
-    bsp_perf_control_end(BSP_PERF_CURRENT, mark);
-    mark = bsp_perf_control_begin();
+    app_perf_end_control(APP_PERF_CURRENT, mark);
+    mark = app_perf_begin_control();
     test_dwt.CYCCNT += 100u * TEST_CYCLES_PER_US;
-    bsp_perf_control_end(BSP_PERF_SIXSTEP, mark);
+    app_perf_end_control(APP_PERF_SIXSTEP, mark);
     test_dwt.CYCCNT = base + TEST_HZ;
     s_tick = 1000u;
-    assert(bsp_perf_snapshot(&snap) == 1u);
+    assert(app_perf_get_snapshot(&snap) == 1u);
     assert(snap.elapsed_cycles == TEST_HZ);
     assert(snap.work_cycles == 170u * TEST_CYCLES_PER_US);
     assert(snap.irq_cycles == 5u * TEST_CYCLES_PER_US);
-    assert(snap.control[BSP_PERF_CURRENT].count == 2u);
-    assert(snap.control[BSP_PERF_CURRENT].total_cycles == 70u * TEST_CYCLES_PER_US);
-    assert(snap.control[BSP_PERF_CURRENT].max_cycles == 50u * TEST_CYCLES_PER_US);
-    assert(snap.control[BSP_PERF_CURRENT].overruns == 1u);
-    assert(snap.control[BSP_PERF_SIXSTEP].overruns == 0u);
+    assert(snap.control[APP_PERF_CURRENT].count == 2u);
+    assert(snap.control[APP_PERF_CURRENT].total_cycles == 70u * TEST_CYCLES_PER_US);
+    assert(snap.control[APP_PERF_CURRENT].max_cycles == 50u * TEST_CYCLES_PER_US);
+    assert(snap.control[APP_PERF_CURRENT].overruns == 1u);
+    assert(snap.control[APP_PERF_SIXSTEP].overruns == 0u);
 }
 
 /** @brief 验证无样本提示、比例换算、日志长度及计数器不可用路径。 */
@@ -120,45 +120,45 @@ static void test_reporting(void)
 {
     uint32_t base = start_clock(0u);
     uint32_t mark;
-    bsp_perf_work_begin();
+    app_perf_begin_work();
     test_dwt.CYCCNT += TEST_HZ / 4u;
-    bsp_perf_work_end();
+    app_perf_end_work();
     test_dwt.CYCCNT = base + TEST_HZ;
     s_tick = 1000u;
-    bsp_perf_task();
+    app_perf_task();
     assert(strstr(s_log, "work=25.00% busy=250.000ms poll=750.000ms") != NULL);
     assert(strstr(s_log, "CURRENT=OFF") != NULL && strstr(s_log, "SIXSTEP=OFF") != NULL);
     s_log[0] = '\0';
-    mark = bsp_perf_control_begin();
+    mark = app_perf_begin_control();
     test_dwt.CYCCNT += 50u * TEST_CYCLES_PER_US;
-    bsp_perf_control_end(BSP_PERF_CURRENT, mark);
+    app_perf_end_control(APP_PERF_CURRENT, mark);
     test_dwt.CYCCNT = base + 2u * TEST_HZ;
     s_tick = 2000u;
-    bsp_perf_task();
+    app_perf_task();
     assert(strstr(s_log, "avg=50.00us max=50.00us") != NULL);
     assert(strstr(s_log, "budget=50us peak=100.00% over=1") != NULL);
     s_log[0] = '\0';
     test_dwt_running = 0u;
-    bsp_perf_init();
+    app_perf_init();
     s_tick += 1000u;
-    bsp_perf_task();
+    app_perf_task();
     assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "work=") == NULL);
 }
 
 /** @brief 超长窗口和改频均不能发布貌似正常的 CPU 负载。 */
 static void test_invalid_window(void)
 {
-    bsp_perf_snapshot_t snap = {0};
+    app_perf_snapshot_t snap = {0};
     (void)start_clock(0u);
     test_dwt.CYCCNT += 100u;
     s_tick = 10001u;
-    assert(bsp_perf_snapshot(&snap) == 0u && snap.clock_hz == 0u);
+    assert(app_perf_get_snapshot(&snap) == 0u && snap.clock_hz == 0u);
     test_dwt.CYCCNT += 100u;
-    assert(bsp_perf_snapshot(&snap) == 1u);
+    assert(app_perf_get_snapshot(&snap) == 1u);
     SystemCoreClock /= 2u;
     test_dwt.CYCCNT += 100u;
-    assert(bsp_perf_snapshot(&snap) == 0u);
-    assert(bsp_perf_snapshot(NULL) == 0u);
+    assert(app_perf_get_snapshot(&snap) == 0u);
+    assert(app_perf_get_snapshot(NULL) == 0u);
 }
 
 /** @brief 执行实际统计模块的边界与日志回归。 */

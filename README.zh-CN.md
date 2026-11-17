@@ -17,24 +17,26 @@ STM32-FOC/
 ├── Core/                    生成的启动初始化与中断接口
 ├── Drivers/                 原厂 HAL/CMSIS，只读
 ├── MDK-ARM/                 Keil 工程、启动文件及编译产物
-├── platform/                板级参数、ADC1/2/3 电流、ADC4 母线实现
 ├── src/
-│   ├── app/                 命令、状态管理、六步调度及板级接口
-│   ├── drv/                 PWM、霍尔实现及 ADC 接口
-│   └── bsp/                 串口队列、DWT 性能统计
-├── tests/                   主机回归与 HAL 替身
+│   ├── app/                 应用层：app/、cmd/、control/、log/、perf/、status/
+│   ├── algorithm/           纯算法：sixstep/、foc/（只依赖标准 C）
+│   ├── third_party/          第三方库（预留）
+│   └── bsp/                 板级层：board/、pwm/、hall/、adc_cur/、adc_vbus/、uart/、time/
+├── tests/                   主机回归、HAL 替身与结构合规检查
 ├── docs/en/                 英文文档
 ├── docs/zh-CN/              中文文档
 └── datasheet/               原始器件资料，只读，不参与构建
 ```
 
-生成代码只改 USER CODE 区；外设配置改根目录下的 `.ioc` 并通过 CubeMX 重新生成。平台 ADC 的实现只保留在 `platform/`，`src/drv/` 提供接口，不再有同名的其他平台实现。
+严格两层架构：`app` 可以调用 `bsp`，`bsp` 不得 include `src/app/`。每个模块一个文件夹，`.h`/`.c` 成对放置；`bsp/` 模块之间不得互相 include（只允许 `bsp/board/board.h`）。完整方案见[第 13 篇](docs/zh-CN/13-repo-restructure.md)，`bash tests/check_structure.sh` 负责合规检查。
+
+生成代码只改 USER CODE 区；外设配置改根目录下的 `.ioc` 并通过 CubeMX 重新生成。ADC 实现位于 `src/bsp/adc_cur/` 与 `src/bsp/adc_vbus/`。
 
 `tests/` 是回归测试源码，保留用于检查保护逻辑、ADC 和性能统计。运行测试时会自动创建 `build/native-tests/` 存放产物，该目录可随时清理。下载缓存、分析临时文件和驱动安装包不需要放在工程内。
 
 ## 当前功能
 
-- USART3 命令与非阻塞日志；0 停机、h 霍尔监视、? 帮助。
+- USART3 命令与 DMA 非阻塞日志；0 停机、h 霍尔监视、? 帮助。
 - 霍尔原始状态读取及相对扇区查表，尚未完成转子角度标定。
 - 每 500 ms 依次读取 ADC1/2/3 三相电流，ADC4 独立读取母线电压；失败关桥并锁住启动入口。
 - TIM1 六路互补 PWM 与 1 µs 死区已配置，**上电 PWM 自检和开桥均禁用**，1/2 转动命令被拒绝。2026-11-17 用户反馈开机 demo 测试正常、死区实测 990 ns；临时 demo 已关闭，硬件死区配置保留。

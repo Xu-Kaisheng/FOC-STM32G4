@@ -10,7 +10,7 @@
 
 ## 1. CPU 占用率与控制耗时
 
-已实现 `bsp_perf`：DWT 记录有效工作时间并集、正常中断与控制任务的周期数，每秒从主循环输出。无电流环样本时明确显示 CURRENT=OFF。详细统计口径、接口、回绕处理和限制以 [12-performance-monitoring.md](12-performance-monitoring.md) 为准。
+已实现 `app/perf`：DWT 记录有效工作时间并集、正常中断与控制任务的周期数，每秒从主循环输出。无电流环样本时明确显示 CURRENT=OFF。详细统计口径、接口、回绕处理和限制以 [12-performance-monitoring.md](12-performance-monitoring.md) 为准。
 
 170 MHz 下 32 位 DWT 约 25.26 s 回绕；当前统计窗口约 1 s。电流环最坏耗时目标小于 15 µs，硬期限小于 50 µs。不能用平均 CPU 有效负载代替最坏执行时间验收。
 

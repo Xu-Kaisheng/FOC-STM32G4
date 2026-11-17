@@ -37,3 +37,16 @@ Keil 使用 ARM Compiler 5.06 update 7、STM32G4xx_DFP 1.5.0。主机测试使�
 - 三组主机回归全部通过；运行测试已改用 G474 平台 ADC 实现、PC6/7/8 霍尔、PC9 关桥、ARR=4250、DTG=149。
 - G474 的 104 个 Core、Drivers、CubeMX 配置和 Keil 工程文件与清理前 SHA-256 一致；仅清理平台相关内容，不改变实际固件控制策略。
 - 工作区只有一个工程，所有 Keil 源文件路径及 Markdown 链接可解析；未烧录，未执行硬件实测。
+
+## 2026-11-17 结构重构后烧录验证
+
+- 重新编译：0 Error(s)、0 Warning(s)，Code=30904、RO-data=1488、RW-data=104、ZI-data=4608。
+- J-Link 烧录：Erase/Program/Verify OK，目标电压 3.283 V，烧录后应用自动运行。
+- 115200 8N1 串口（J-Link CDC UART）验证：启动日志 `[BOARD] G474RET6 DevEBox / MONITOR ONLY`、`STM32-FOC v0.1 boot`、`HALL=INV`；`?` 帮助正常；`1` 返回 `[LOCK] Board wiring not verified, monitor only`，桥保持关断。
+- DMA 日志发送与命令接收均正常，长日志未出现丢字。
+- 母线读取约 22.2~22.4 V（raw 1099~1113），换算链路可用。
+- 三相电流原始值约 362/445/985，换算显示 -7.9/-7.4/-3.8 A，明显偏离 0 A 对应的 1.25 V（raw≈1551）。说明电流采样链路当前不在预期零点，**不得当作有效电流使用**；需先核对接线与偏置再开桥。
+- 霍尔读数为 `INV`（000/111），符合电机/霍尔未接入或接线待核验的状态。
+- 性能统计：J-Link 连接期间正常，CPU work≈55.8%、irq≈0.53 ms/s；J-Link 断开后固定显示 `[PERF] unavailable`，说明本板 DWT 计数依赖调试域供电。待优化项：核查 DBGMCU/调试时钟，或改用定时器时基做独立运行统计。
+
+未执行：开桥带载、PWM 波形复测、同步电流采样与限流验证。以上结果不能替代功率级验收。

@@ -7,23 +7,30 @@ This describes current bridge-off diagnostics and the retained v0.1 six-step pat
 ## 1. Modules
 
 - Core: generated clock/GPIO/ADC/TIM1/USART3; USER CODE application calls and shutdown.
-- `app_sixstep`: modes, commutation, commands, interlock feedback, current status.
-- `tim_pwm`: outputs, duty, floating phases, mode-specific interlocks, CTRL_SD, emergency stop.
+- `app/app`: `app` (init, mode interlocks, main loop), `app_state` (mode, timestamps, hall, ADC availability).
+- `app/cmd`: `app_cmd_task()`: nonblocking command read and parsing.
+- `app/control`: algorithm strategy: six-step parameters, bench limits, BSP callback injection.
+- `app/log`: `app_log_task()`: log formatting, 512-byte queue and DMA pumping.
+- `app/status`: `app_status_task()`: periodic status output.
+- `algorithm/sixstep`: step table and progression, pure algorithm; hardware output via injected callbacks.
+- `algorithm/foc`, `third_party`: reserved.
+- `bsp/pwm`: outputs, duty, floating phases, mode-specific interlocks, CTRL_SD, emergency stop.
 - `adc_cur`: calibration, three sequential regular-group reads, complete-sample publication and failure return.
 - `adc_vbus`: ADC4 calibration/conversion/scaling; [bus-voltage guide](10-bus-voltage-adc.md).
 - `hall`: raw code, relative sector lookup, state text.
-- `bsp_uart`: static queue, single-byte background TX, nonblocking RX.
-- `bsp_perf`: DWT control timing and effective work, reported each second; [performance guide](12-performance-monitoring.md).
+- `bsp/uart`: USART3 hardware only: start one TX DMA transfer, query busy, nonblocking RX; **no queue, no task**.
+- `bsp/board`: board constants and time base; the only BSP module others may depend on.
+- `app/perf` + `bsp/time`: DWT control timing and effective work, reported each second; [performance guide](12-performance-monitoring.md).
 
-The application uses public APIs. Platform ADC implementations own their handles; UART alone accesses its handle. `app_board` supplies time, PWM parameters, name, and policy. There is no control ISR; ADCs are main-loop polled. G474 disables boot self-test and rejects bridge enable at application and driver layers.
+If the applications call down only: applications may use `algorithm`, `third_party` and `bsp`; `algorithm`/`third_party` never include app/bsp; `bsp` depends only on `bsp/board` and contains no `*_task()`. UART alone accesses its handle. There is no control ISR; ADCs are main-loop polled. G474 disables boot self-test and rejects bridge enable at application and driver layers.
 
 ## 2. Startup
 
 ```text
 HAL_Init → clock → GPIO (SD low) → ADC/TIM1/USART3
   → app_init
-      → initialize UART queue
-      → pwm_init: bridge off, PWM stopped, duty cleared
+      → app_log_init (512-byte log queue)
+      → bsp_pwm_init: bridge off, PWM stopped, duty cleared
       → calibrate ADC1/2/3; lock start on failure
       → calibrate ADC4, read VBUS; lock start on failure
       → initialize Hall inputs
@@ -38,13 +45,12 @@ Any self-test requires SD=0. Configuration failure never authorizes bypassing ch
 
 ```text
 app_task
-  → transmit at most one queued byte
-  → nonblocking receive/process of one command
-  → refresh tick after any 200 ms command wait
-  → advance running forward/reverse commutation at its step interval
-  → Hall-monitor mode: print changes
-  → every 500 ms: ADC4, then ADC1/2/3, then status logs
-  → service performance reporting
+  → app_log_task()        background log TX (DMA)
+  → app_cmd_task()        nonblocking one-command read and parse
+  → app_control_task()    six-step advance at the step interval (algorithm + BSP callbacks)
+  → Hall monitor prints only on state change
+  → app_status_task()     every 500 ms read ADC4/ADC1-3 and print status
+  → app_perf_task()       once-per-second performance report
 ```
 
 Step interval is `floor(1000/(6×f_e))` ms; at most one step per iteration. This does not guarantee a real-time loop rate. Formatting, ADC polling, and scheduling still consume time despite nonblocking transmission.

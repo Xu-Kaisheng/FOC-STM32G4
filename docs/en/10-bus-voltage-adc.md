@@ -4,7 +4,7 @@
 
 ## Function and wiring
 
-`platform/adc_vbus.c` and `src/drv/adc_vbus.h` use ADC4's independent regular group for slow bus-divider monitoring. Connect CN3-8 to PB12 (ADC4_IN3), CN3-7/16 to MCU ground. The 12 kΩ + 12 kΩ + 1 kΩ divider gives:
+`src/bsp/adc_vbus/adc_vbus.c` and `adc_vbus.h` use ADC4's independent regular group for slow bus-divider monitoring. Connect CN3-8 to PB12 (ADC4_IN3), CN3-7/16 to MCU ground. The 12 kΩ + 12 kΩ + 1 kΩ divider gives:
 
 ```text
 Vbus = raw × 3.3 × 25 / 4096
@@ -22,8 +22,8 @@ Vbus = raw × 3.3 × 25 / 4096
 | Clock | SYSCLK/4=42.5 MHz, ADC345 domain |
 | Trigger | One-shot software; no continuous conversion, DMA, or ADC4 interrupt |
 | Schedule | One boot read, then every 500 ms in main loop |
-| `adc_vbus_init()` | Internal ADC4 handle; calibrate bridge-off; 1 success / 0 failure; public API has no HAL |
-| `adc_vbus_read(out)` | Start/poll/read/stop; publish raw and voltage only after complete success |
+| `bsp_adc_vbus_init()` | Internal ADC4 handle; calibrate bridge-off; 1 success / 0 failure; public API has no HAL |
+| `bsp_adc_vbus_read(out)` | Start/poll/read/stop; publish raw and voltage only after complete success |
 | Failure | Output unchanged; caller must not reuse old sample |
 
 The poll timeout argument is 1 ms; HAL stop also has internal timeouts, so this is not a whole-function 1 ms bound. Theoretical conversion is about 6.12 µs, unmeasured on hardware. Never call this driver in an ISR.

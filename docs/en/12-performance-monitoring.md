@@ -4,9 +4,9 @@
 
 ## Function and definitions
 
-`src/bsp/bsp_perf.c/.h` uses Cortex-M DWT CYCCNT and reports from the main loop every 1000 ms. Conversion uses runtime `SystemCoreClock`, currently 170 MHz. Initialization at the end of `app_init()` excludes startup ADC calibration from runtime windows.
+Accounting lives in `src/app/perf/perf.c/.h` plus `perf_print.c`; DWT register access moved down to `src/bsp/time/cycle.h` (all `static inline`), which also removes the old `bsp/uart` self-timing dependency cycle; log pumping now lives in `app/log`. It uses Cortex-M DWT CYCCNT and reports from the main loop every 1000 ms. Conversion uses runtime `SystemCoreClock`, currently 170 MHz. Initialization at the end of `app_init()` excludes startup ADC calibration from runtime windows.
 
-There is no current loop. Slow ADC diagnostics are not current control. G474 disables power enable and boot self-test; the temporary PWM demo is finished and disabled. Both control categories normally report `OFF (no samples)`. A future unlocked six-step path would report actual `apply_step()` time.
+There is no current loop. Slow ADC diagnostics are not current control. G474 disables power enable and boot self-test; the temporary PWM demo is finished and disabled. Both control categories normally report `OFF (no samples)`. A future unlocked six-step path would report actual `app_apply_step()` time.
 
 | Field | Meaning |
 |---|---|
@@ -15,7 +15,7 @@ There is no current loop. Slow ADC diagnostics are not current control. G474 dis
 | `poll` | Remaining window time: empty polling, scheduling checks, uncovered accounting overhead; not hardware sleep |
 | `irq` | Instrumented interrupt time; a subset of busy, do not add it again |
 | `win` | Actual window duration; blocking may extend it beyond 1000 ms |
-| `SIXSTEP n/avg/max/share` | `apply_step()` count, average/maximum µs, accumulated time/window; not a 20 kHz current loop |
+| `SIXSTEP n/avg/max/share` | `app_apply_step()` count, average/maximum µs, accumulated time/window; not a 20 kHz current loop |
 | `CURRENT n/avg/max/share` | Equivalent current-loop API results; no calls today, so OFF |
 | `CURRENT budget/peak/over` | 50 µs budget, maximum/budget ratio, count of durations ≥50 µs; only printed with samples |
 
@@ -46,15 +46,15 @@ Average, maximum, and overruns reset each window, not only at boot. The nonblock
 
 | API | Contract |
 |---|---|
-| `bsp_perf_init()` | After startup diagnostics; enable/check DWT without depending on debugger setup |
-| `bsp_perf_work_begin/end()` | Mark useful work; supports nesting; pair every exit |
-| `bsp_perf_irq_enter_ISR/exit_ISR()` | Pair in USER CODE interrupt entry/exit; nested IRQ time is not double-counted |
-| `bsp_perf_control_begin()` | Return start cycles and enter useful-work interval |
-| `bsp_perf_control_end(id,start)` | Accumulate category and leave interval; a category must not recurse |
-| `bsp_perf_snapshot(out)` | Consume/reset one window in main loop; normally owned by `bsp_perf_task()` |
-| `bsp_perf_task()` | Called each main iteration; throttled by tick; formats only in main loop |
+| `app_perf_init()` | After startup diagnostics; enable/check DWT without depending on debugger setup |
+| `app_perf_begin_work()` / `app_perf_end_work()` | Mark useful work; supports nesting; pair every exit |
+| `app_perf_enter_irq()` / `app_perf_exit_irq()` | Pair in USER CODE interrupt entry/exit; nested IRQ time is not double-counted |
+| `app_perf_begin_control()` | Return start cycles and enter useful-work interval |
+| `app_perf_end_control(id,start)` | Accumulate category and leave interval; a category must not recurse |
+| `app_perf_get_snapshot(out)` | Consume/reset one window in main loop (read-and-clear); normally owned by `app_perf_task()` |
+| `app_perf_task()` | Called each main iteration; throttled by tick; formats only in main loop |
 
-Future current control should bracket real computation and PWM-duty submission with begin/end using `BSP_PERF_CURRENT`; add IRQ hooks to new ADC/timer handlers. No fake control call or PWM start was added merely to create measurements.
+Future current control should bracket real computation and PWM-duty submission with begin/end using `APP_PERF_CURRENT`; add IRQ hooks to new ADC/timer handlers. No fake control call or PWM start was added merely to create measurements.
 
 ## Real-time limits
 

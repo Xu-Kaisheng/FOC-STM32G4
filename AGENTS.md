@@ -45,7 +45,7 @@
 | 霍尔 U/V/W | PC6/PC7/PC8，上拉输入 |
 | 电流 U/V/W | PC0 ADC1_IN6；PC1 ADC2_IN7；PB1 ADC3_IN1 |
 | VBUS | PB12 ADC4_IN3，×25，每 500 ms 监视 |
-| 调试串口 | PB10/PB11，USART3，115200 8N1 |
+| 调试串口 | PB10/PB11，USART3，115200 8N1；TX 走 DMA1_Channel2（DMAMUX USART3_TX），USART3/DMA 中断优先级 15 |
 | 时钟 / PWM | HSI+PLL 170 MHz，TIM1 PSC=0、ARR=4250、RCR=1、中心对齐，20 kHz |
 | 死区 / ADC | DTG=149，1 µs；ADC 内核 42.5 MHz，12 位、247.5 周期，轮询超时参数 1 ms |
 
@@ -68,20 +68,61 @@
 
 ## 4. 目录结构
 
+四类代码，只允许由上向下依赖：应用业务 → 算法/第三方；应用业务 → BSP；算法层不得依赖 app 或 bsp。
+
 ```
 src/
-├── app/      模式管理、命令解析与板级接口
-├── drv/      tim_pwm、hall 实现及 ADC 接口
-└── bsp/      串口队列与性能统计
-
-platform/  板级参数与 ADC 实现
-后续 foc/ 控制算法、电流环、速度环尚未实现。
+├── app/                              # 应用层：业务状态机、控制策略、协议、任务
+│   ├── app/                          # app_task / app_set_mode / 共享状态（app_state）
+│   ├── cmd/                          # app_cmd_task：串口命令接收与解析
+│   ├── control/                      # app_control_task：算法策略（六步参数，后续选 FOC）
+│   ├── log/                          # app_log_task：日志格式化、静态队列、DMA 推进
+│   ├── perf/                         # app_perf_task：性能统计与日志输出
+│   └── status/                       # app_status_task：周期性状态打印
+├── algorithm/                        # 算法层：无任何硬件/应用依赖（只用标准 C）
+│   ├── sixstep/                      # 换相表、步进规则；输出经调用方注入的回调
+│   └── foc/                          # 预留：Clarke/Park/PI/SVPWM
+├── bsp/                              # 板级层：换板/换引脚必须改的代码，禁止出现 task
+│   ├── board/                        # 板级常量与时基（唯一允许被其他 BSP 依赖）
+│   ├── pwm/                          # pwm_io / pwm_duty / pwm_bridge / pwm 编排
+│   ├── hall/                         # 霍尔读取
+│   ├── adc_cur/                      # 三相电流 ADC
+│   ├── adc_vbus/                     # 母线电压 ADC4
+│   ├── uart/                         # USART3 + TX DMA 硬件接口（无队列、无 task）
+│   └── time/                         # cycle.h：DWT 周期计数（全部 static inline）
+└── third_party/                      # 第三方源码：尽量只依赖标准 C，不反向依赖 app/bsp
 ```
 
-规则：每个 `.c` 只负责一个功能域；跨模块只通过头文件里的公开函数通信，
-**不允许跨模块直接引用全局变量**。
+规则：
 
-唯一工程位于根目录，根目录 `STM32-FOC.uvmpw` 只引用该目标。应用、PWM、霍尔、串口和性能统计位于 `src/`；ADC 实现在根目录的 `platform/`。板级参数通过 `src/app/app_board.h` 提供，应用不直接访问 HAL ADC 句柄。`Core/Drivers/MDK-ARM` 适用生成区域与 SDK 保护规则。
+1. **依赖方向**：`app → algorithm`、`app → bsp`、`app → third_party`；
+   `algorithm` 与 `third_party` 不得 include `app/`、`bsp/` 或厂商 HAL；
+   `bsp/` 不得 include `app/` 或 `algorithm/`。
+2. **BSP 不得有任务**：`bsp/` 内不允许出现 `*_task()`；主循环推进一律放 `app/`。
+   BSP 只提供"配置、读、写、查询"这类硬件原语。
+3. **BSP 横向调用归零**：`bsp/` 内 `.c` 之间不得互相 include，只允许 include
+   自己模块的头文件与 `bsp/board/board.h`；纯计算 `static inline` 头文件例外。
+4. **BSP 不得出现应用/算法业务标识符**：`SIXSTEP`、`APP_MODE_`、`app_`、`alg_` 前缀等。
+5. **判定标准**："换一块板子或换一个引脚必须改的代码"放 `bsp/`；"换产品需求才改的代码"放 `app/`；
+   纯数学/纯决策放 `algorithm/`。
+6. **app 每个子文件夹都必须有 `*_task()` 入口**，由 `app_task()` 依次调用。
+7. 每个 `.c` 只负责一个功能域；跨模块只通过头文件里的公开函数通信，
+   **不允许跨模块直接引用全局变量**；共享状态集中在 `app/app/app_state.c`，
+   六步参数在 `app/control`，算法层无状态（状态由调用方传入）。
+8. 模块文件按 `init → task → read → write → hook` 分节，头文件声明顺序与 `.c` 一致；
+   单个 `.c` 软限 250 行，超限须在文件头写明"为何不拆"。
+9. **函数命名：`<模块>_<动词>_<名词>`（强制）**。模块名与目录一致（`app`、`app_cmd`、
+   `app_control`、`app_log`、`app_perf`、`app_status`、`alg_sixstep`、`bsp_pwm` 等）；
+   动词用真实动作，不把 `set`/`enable` 硬改成 `write`。
+   例：`bsp_pwm_set_duty`、`app_control_set_duty`、`app_log_write`、`alg_sixstep_next_step`。
+   例外：HAL 弱回调沿用库名；文件内 `static` 辅助函数不重复模块前缀；类型名不受约束。
+10. 合规自检：`bash tests/check_structure.sh` 必须返回 0。
+
+唯一工程位于 `MDK-ARM/G474-FOC.uvprojx`，根目录 `STM32-FOC.uvmpw` 只引用该目标；
+工程分组为 `Application/User/App`、`Application/User/Algo`、`Application/User/BSP`，
+包含路径与上表目录一一对应。`CTRL_SD`、`bsp_pwm_stop_emergency` 的关桥时序、
+ADC 句柄封装仍由 `bsp/` 负责，应用不直接访问 HAL ADC 句柄。
+`Core/Drivers/MDK-ARM` 适用生成区域与 SDK 保护规则。
 
 ---
 

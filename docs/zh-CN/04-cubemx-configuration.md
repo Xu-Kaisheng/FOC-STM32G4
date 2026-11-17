@@ -19,6 +19,7 @@
 | ADC4 | PB12 / IN3，母线分压 |
 | ADC 公共参数 | 独立模式、SYSCLK/4=42.5 MHz、12 位右对齐、247.5 周期、规则组单通道软件触发 |
 | USART3 | PB10 TX / PB11 RX，115200 8N1 |
+| DMA | DMA1_Channel2，DMAMUX 请求 USART3_TX，NORMAL、字节、内存递增；DMA1_Channel2 与 USART3 中断抢占优先级 15 |
 | 调试 | PA13 SWDIO / PA14 SWCLK |
 
 PA8/PA9/PA10 为 TIM1_CH1/2/3（AF6），PB13/PB14 为 CH1N/2N（AF6），PB15 为 CH3N（AF4）。详细接线及板载占用见 docs/zh-CN/01-hardware-and-wiring.md、docs/zh-CN/11-g474-board-guide.md。
@@ -29,8 +30,10 @@ PA8/PA9/PA10 为 TIM1_CH1/2/3（AF6），PB13/PB14 为 CH1N/2N（AF6），PB15 �
 
 1. 只修改 `.ioc` 并经 CubeMX 重新生成外设配置，不手改生成区。
 2. 保留 `Core` 的 USER CODE 中应用入口、异常关桥及 SysTick 性能统计钩子。
-3. 确认 Keil 仍引用 `src/app`、`src/drv`、`src/bsp` 与本板 `platform` 的源码条目。
+3. 确认 Keil 仍引用 `src/app`、`src/bsp` 下的全部源码条目（分组见 [13-repo-restructure.md](13-repo-restructure.md)）。
 4. HAL/CMSIS、启动文件及编译选项按工程规则保护；SDK 不手工修改。
 5. 重编译并检查 0 error / warning；硬件时序修改后需重新测量，不能用配置值代替实测。
+
+USART3 的 DMA 仅由 CubeMX 生成（`Core/Src/dma.c` 与 `HAL_UART_MspInit()` 中的 `hdma_usart3_tx`），驱动不手工使能 DMA 时钟；中断优先级设为 15 以保证串口不会抢占未来的电流环。
 
 当前板级策略禁止开桥及上电 PWM 自检，临时抓波 demo 已完成测试并关闭，没有新增同步 ADC 触发、中断电流环或快速保护。

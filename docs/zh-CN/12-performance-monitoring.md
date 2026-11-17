@@ -4,7 +4,7 @@
 
 ## 功能与统计口径
 
-G474 使用 `src/bsp/bsp_perf.c/.h`，通过 Cortex-M 的 DWT CYCCNT 记录 CPU 周期，每 1000 ms 从主循环输出。换算使用运行时 `SystemCoreClock`，当前为 170 MHz 配置。初始化在 `app_init()` 末尾，因此 ADC 启动校准不混入运行窗口。
+统计逻辑位于 `src/app/perf/perf.c/.h` 与 `perf_print.c`，DWT 寄存器访问下沉到 `src/bsp/time/cycle.h`（全部 `static inline`）；这样 `bsp/uart` 不再自己做自计时，日志推进移到 `app/log`，依赖环被破除。通过 Cortex-M 的 DWT CYCCNT 记录 CPU 周期，每 1000 ms 从主循环输出。换算使用运行时 `SystemCoreClock`，当前为 170 MHz 配置。初始化在 `app_init()` 末尾，因此 ADC 启动校准不混入运行窗口。
 
 当前没有电流闭环，不能把低频 ADC 诊断称为电流环。G474 禁止开桥与上电 PWM 自检；临时开机 demo 已完成测试并关闭，启动诊断结束后初始化性能统计，因此正常运行时两个控制统计均显示 `OFF (no samples)`。未来解锁并运行六步模式后，`SIXSTEP` 显示真实换相输出函数耗时。
 
@@ -15,7 +15,7 @@ G474 使用 `src/bsp/bsp_perf.c/.h`，通过 Cortex-M 的 DWT CYCCNT 记录 CPU 
 | `poll` | 窗口剩余时间，ms；包括空轮询、调度检查与未覆盖的计时开销，不是硬件休眠 |
 | `irq` | 已接入中断区间耗时，ms；属于 busy 的子集，不能再与 busy 相加 |
 | `win` | 实际统计窗口耗时，ms；主循环阻塞时可能超过 1000 ms，不假定窗口固定为一秒 |
-| `SIXSTEP n/avg/max/share` | `apply_step()` 调用次数、平均/最大耗时（us）、累计耗时占窗口的比例；不是 20 kHz 电流环 |
+| `SIXSTEP n/avg/max/share` | `app_apply_step()` 调用次数、平均/最大耗时（us）、累计耗时占窗口的比例；不是 20 kHz 电流环 |
 | `CURRENT n/avg/max/share` | 电流环统计接口的同类结果；当前无调用，显示 OFF |
 | `CURRENT budget/peak/over` | 电流环预算 50 us、最大耗时占预算比例、耗时大于或等于 50 us 的次数；仅有样本时输出 |
 
@@ -46,15 +46,15 @@ G474 使用 `src/bsp/bsp_perf.c/.h`，通过 Cortex-M 的 DWT CYCCNT 记录 CPU 
 
 | 接口 | 调用约束 |
 |---|---|
-| `bsp_perf_init()` | 启动诊断完成后调用；启用并检查 DWT 是否计数，不要求调试器先开启 |
-| `bsp_perf_work_begin/end()` | 标记有效工作，支持嵌套；所有出口必须配对 |
-| `bsp_perf_irq_enter_ISR/exit_ISR()` | 正常 ISR 的 USER CODE 入口/出口配对；嵌套中断不重复累计 |
-| `bsp_perf_control_begin()` | 返回开始周期，同时进入有效工作区间 |
-| `bsp_perf_control_end(id, start)` | 完成指定控制任务统计并退出工作区间；每种控制任务不可递归重入 |
-| `bsp_perf_snapshot(out)` | 主循环消费一次窗口并清零；正常应用由 `bsp_perf_task()` 独占调用 |
-| `bsp_perf_task()` | 每轮主循环调用，内部按毫秒时基限频；格式化只在主循环进行 |
+| `app_perf_init()` | 启动诊断完成后调用；启用并检查 DWT 是否计数，不要求调试器先开启 |
+| `app_perf_begin_work()` / `app_perf_end_work()` | 标记有效工作，支持嵌套；所有出口必须配对 |
+| `app_perf_enter_irq()` / `app_perf_exit_irq()` | 正常 ISR 的 USER CODE 入口/出口配对；嵌套中断不重复累计 |
+| `app_perf_begin_control()` | 返回开始周期，同时进入有效工作区间 |
+| `app_perf_end_control(id, start)` | 完成指定控制任务统计并退出工作区间；每种控制任务不可递归重入 |
+| `app_perf_get_snapshot(out)` | 主循环消费一次窗口并清零（read-and-clear）；正常应用由 `app_perf_task()` 独占调用 |
+| `app_perf_task()` | 每轮主循环调用，内部按毫秒时基限频；格式化只在主循环进行 |
 
-未来电流环的真实计算入口调用 `bsp_perf_control_begin()`，在计算及 PWM 占空比提交完成后调用 `bsp_perf_control_end(BSP_PERF_CURRENT, start)`，同时为新增 ADC/定时器 ISR 接入中断统计。当前没有增加假的电流环调用，也没有为凑出统计值启动 PWM。
+未来电流环的真实计算入口调用 `app_perf_begin_control()`，在计算及 PWM 占空比提交完成后调用 `app_perf_end_control(APP_PERF_CURRENT, start)`，同时为新增 ADC/定时器 ISR 接入中断统计。当前没有增加假的电流环调用，也没有为凑出统计值启动 PWM。
 
 ## 实时性与限制
 

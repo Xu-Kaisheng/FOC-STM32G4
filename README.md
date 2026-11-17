@@ -17,24 +17,26 @@ STM32-FOC/
 ├── Core/                    Generated initialization and interrupt handlers
 ├── Drivers/                 Vendor HAL/CMSIS; read-only
 ├── MDK-ARM/                 Keil project, startup code, build output
-├── platform/                Board policy, phase-current and bus-voltage ADCs
 ├── src/
-│   ├── app/                 Commands, modes, six-step scheduler, board API
-│   ├── drv/                 PWM, Hall inputs, ADC interfaces
-│   └── bsp/                 UART queue and DWT performance monitoring
-├── tests/                   Host regression tests and HAL substitutes
+│   ├── app/                 Application: app/, cmd/, control/, log/, perf/, status/
+│   ├── algorithm/           Pure algorithms: sixstep/, foc/ (standard C only)
+│   ├── third_party/          External libraries (reserved)
+│   └── bsp/                 Board layer: board/, pwm/, hall/, adc_cur/, adc_vbus/, uart/, time/
+├── tests/                   Host regression tests, HAL substitutes, structure checker
 ├── docs/en/                 English documentation
 ├── docs/zh-CN/              Chinese documentation
 └── datasheet/               Local device references; excluded from Git/build
 ```
 
-Edit generated code only inside USER CODE regions. Change peripheral configuration through the root `.ioc` and CubeMX. ADC implementations live in `platform/`, with public interfaces in `src/drv/`.
+Architecture is strictly two-layer: `app` may call `bsp`; `bsp` must never include `src/app/`. Each module folder keeps its `.h`/`.c` pair, and `bsp/` modules must not include each other (only `bsp/board/board.h`). The full plan is in [doc 13](docs/en/13-repo-restructure.md); `bash tests/check_structure.sh` enforces it.
+
+Edit generated code only inside USER CODE regions. Change peripheral configuration through the root `.ioc` and CubeMX. ADC implementations live in `src/bsp/adc_cur/` and `src/bsp/adc_vbus/`.
 
 `tests/` contains regression source for interlocks, ADC handling, and performance accounting. Running it creates disposable output in `build/native-tests/`. Download caches, scratch files, and driver installers do not belong in the source tree.
 
 ## Current functionality
 
-- USART3 commands and nonblocking log transmission: `0` stops, `h` monitors Hall inputs, `?` prints help.
+- USART3 commands and DMA-backed nonblocking log transmission: `0` stops, `h` monitors Hall inputs, `?` prints help.
 - Raw Hall codes and a relative sector lookup table; rotor angle calibration is pending.
 - Sequential ADC1/2/3 phase-current reads and independent ADC4 bus-voltage reads every 500 ms. Acquisition failure disables the bridge and latches startup lockout.
 - TIM1 has six complementary outputs and 1 µs hardware dead time. **Boot PWM self-test and bridge enable are disabled**; commands `1`/`2` are rejected. On 2026-11-17 the user reported a successful temporary PWM test and **990 ns measured dead time**. The demo is now disabled; hardware dead time remains configured.

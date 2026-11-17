@@ -1,0 +1,218 @@
+/**
+ * @file    app.c
+ * @brief   v0.1 应用主循环：初始化、模式联锁、调度
+ *
+ * 本文件只做编排：换相策略在 `app/control`，命令在 `app_cmd`，
+ * 打印在 `app_status`，统计在 `app_perf`，日志队列在 `app_log`。
+ *
+ * 为什么不拆成多个文件（250 行软限例外）：初始化、模式联锁与主循环共用
+ * 同一份模式状态与启动顺序，拆开只会增加文件数与 include。
+ */
+#include "app.h"
+#include "app_cmd.h"
+#include "app_control.h"
+#include "app_log.h"
+#include "app_state.h"
+#include "app_status.h"
+#include "adc_cur.h"
+#include "adc_vbus.h"
+#include "board.h"
+#include "hall.h"
+#include "perf.h"
+#include "pwm.h"
+#include "uart.h"
+
+/* 自检持续时间与测试占空比 */
+#define BOOT_TEST_MS     3000u
+#define BOOT_TEST_DUTY   0.50f
+
+/* 模式切换时保持关桥，满足驱动板过流锁存的复位等待时间。 */
+#define BRIDGE_RESET_WAIT_MS 200u
+
+/* ---------------- init ---------------- */
+
+/**
+ * @brief  应用初始化
+ * @note   顺序：先关桥 -> 初始化 PWM -> 校准 ADC -> 启动 PWM（桥仍关断）。
+ *         任何一步失败都锁存 ADC 不可用，保证 app_set_mode 无法开桥。
+ */
+void app_init(void)
+{
+    adc_vbus_sample_t vbus = {0};
+    hall_state_t hall;
+
+    bsp_uart_init();
+    app_log_init();
+    app_control_init();
+
+    bsp_pwm_init();              /* 内部会先关 CTRL_SD */
+    app_set_adc_ready(bsp_adc_cur_init());
+    if (app_get_adc_ready() == 0u)
+    {
+        app_log_write("[FATAL] ADC init failed, start disabled\r\n");
+    }
+    if (bsp_adc_vbus_init() == 0u)
+    {
+        app_set_adc_ready(0u);
+        app_log_write("[FATAL] VBUS ADC init failed, start disabled\r\n");
+    }
+    else if (bsp_adc_vbus_read(&vbus) == 0u)
+    {
+        // 启动前先验证规则组链路，避免首次状态打印之前带着采样故障开桥。
+        app_set_adc_ready(0u);
+        app_log_write("[FATAL] VBUS ADC read failed, start disabled\r\n");
+    }
+    bsp_hall_init();
+
+    bsp_pwm_stop();              /* 计数器停，输出空闲电平 */
+    (void)bsp_pwm_enable_bridge(0u);
+
+    if (bsp_board_get_boot_test() != 0u)
+    {
+        // 自检期间 H 桥始终关断（CTRL_SD=0），功率级不出力，只验证频率与死区。
+        // 但即使桥是关的，也必须先确认"六个输出都真的打开了"——
+        // 否则示波器上看到的上管波形会让人误判整个功率级正常。
+        bsp_pwm_set_duty(BOOT_TEST_DUTY, BOOT_TEST_DUTY, BOOT_TEST_DUTY);
+        bsp_pwm_start();
+        if (bsp_pwm_check_ready() == 0u)
+        {
+            bsp_pwm_stop();
+            app_log_write("[FATAL] PWM self-check failed (CCER/MOE/DTG), test skipped\r\n");
+        }
+        else
+        {
+            uint32_t test_start_ms;
+
+            app_log_write("[TEST] PWM 20kHz 50%% for %u ms, bridge OFF\r\n",
+                          (unsigned)BOOT_TEST_MS);
+            // 自检等待期间继续输出日志，让示波器操作提示及时可见；功率级仍关断。
+            test_start_ms = bsp_board_get_millis();
+            while ((bsp_board_get_millis() - test_start_ms) < BOOT_TEST_MS)
+            {
+                app_log_task();
+            }
+            bsp_pwm_stop();
+            bsp_pwm_set_duty_raw(0.0f, 0.0f, 0.0f);
+            app_log_write("[TEST] done, PWM OFF, bridge OFF\r\n");
+        }
+    }
+
+    hall = bsp_hall_read();
+    app_set_last_hall(hall);
+
+    app_log_write("[BOARD] %s\r\n", bsp_board_get_name());
+    app_log_write("\r\nSTM32-FOC v0.1 boot\r\n"
+                  "HALL=%s  (send '?' for help)\r\n",
+                  bsp_hall_get_state_str(hall));
+    // 启动校准与自检不混入运行负载窗口。
+    app_perf_init();
+}
+
+/* ---------------- task ---------------- */
+
+/**
+ * @brief  应用主循环任务
+ */
+void app_task(void)
+{
+    app_mode_t mode;
+
+    // 1) 日志发送：日志模块不自计时，由调用方包裹有效工作区间。
+    app_perf_begin_work();
+    app_log_task();
+    app_perf_end_work();
+
+    // 2) 串口命令：非阻塞读，读不到立即返回
+    app_perf_begin_work();
+    app_cmd_task();
+    app_perf_end_work();
+
+    mode = app_get_mode();
+
+    // 3) 控制策略：六步模式下按步间隔推进；其他模式立即返回
+    app_control_task();
+
+    // 4) 霍尔监视模式：只在状态变化时打印
+    if (mode == APP_MODE_HALL_MON)
+    {
+        hall_state_t h = bsp_hall_read();
+        if (h != app_get_last_hall())
+        {
+            app_perf_begin_work();
+            app_set_last_hall(h);
+            app_log_write("HALL -> %s\r\n", bsp_hall_get_state_str(h));
+            app_perf_end_work();
+        }
+    }
+
+    // 5) 周期性状态打印 + 每秒性能报告
+    app_status_task();
+    app_perf_task();
+}
+
+/* ---------------- write ---------------- */
+
+/**
+ * @brief  进入指定模式
+ * @param  mode: 目标模式
+ */
+void app_set_mode(app_mode_t mode)
+{
+    if (mode == app_get_mode())
+    {
+        return;
+    }
+
+    // 任何模式切换都先断电，再按新模式配置，避免带载切换
+    (void)bsp_pwm_enable_bridge(0u);
+    bsp_pwm_stop();
+    // 只在主循环中等待；此时桥和 PWM 都已关闭，保证重新使能前低电平足够长。
+    bsp_board_delay_ms(BRIDGE_RESET_WAIT_MS);
+
+    app_set_mode_raw(mode);
+
+    switch (mode)
+    {
+        case APP_MODE_STOP:
+            app_log_write("[MODE] STOP\r\n");
+            break;
+
+        case APP_MODE_SIXSTEP_FWD:
+        case APP_MODE_SIXSTEP_REV:
+            if (bsp_board_get_drive_allowed() == 0u)
+            {
+                // 照片不能证明板载占用与功率级接线正确，未核验平台只能监视。
+                app_set_mode_raw(APP_MODE_STOP);
+                app_log_write("[LOCK] Board wiring not verified, monitor only\r\n");
+                break;
+            }
+            if (app_get_adc_ready() == 0u)
+            {
+                app_set_mode_raw(APP_MODE_STOP);
+                app_log_write("[FATAL] ADC unavailable, reset required\r\n");
+                break;
+            }
+            if (app_control_start() == 0u)
+            {
+                app_set_mode_raw(APP_MODE_STOP);
+                app_log_write("[FATAL] Six-step interlock rejected, stay in STOP\r\n");
+                break;
+            }
+            app_log_write("[MODE] SIXSTEP %s, f=%.1f Hz, duty=%.0f%%\r\n",
+                          (mode == APP_MODE_SIXSTEP_FWD) ? "FWD" : "REV",
+                          (double)app_control_get_elec_hz(),
+                          (double)(app_control_get_duty() * 100.0f));
+            break;
+
+        case APP_MODE_HALL_MON:
+        {
+            hall_state_t hall = bsp_hall_read();
+            app_set_last_hall(hall);
+            app_log_write("[MODE] HALL MON, now %s\r\n", bsp_hall_get_state_str(hall));
+            break;
+        }
+
+        default:
+            break;
+    }
+}

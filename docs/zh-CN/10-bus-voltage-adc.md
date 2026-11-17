@@ -4,7 +4,7 @@
 
 ## 功能与接线
 
-`platform/adc_vbus.c` 与 `src/drv/adc_vbus.h` 使用 ADC4 独立规则组采集 ATK-PD6010B 的母线分压，供当前 v0.1 主循环低频监视。CN3 第 8 脚 VBUS 接 PB12（ADC4_IN3），CN3 第 7、16 脚接 MCU GND，原接线无需变更。
+`src/bsp/adc_vbus/adc_vbus.c` 与 `adc_vbus.h` 使用 ADC4 独立规则组采集 ATK-PD6010B 的母线分压，供当前 v0.1 主循环低频监视。CN3 第 8 脚 VBUS 接 PB12（ADC4_IN3），CN3 第 7、16 脚接 MCU GND，原接线无需变更。
 
 驱动板以 12 kΩ + 12 kΩ + 1 kΩ 分压，换算为：
 
@@ -24,8 +24,8 @@
 | 时钟 | SYSCLK/4 = 42.5 MHz，ADC345 公共时钟域 |
 | 触发 | 单次软件触发，禁用连续转换、DMA 和 ADC4 中断 |
 | 调度 | 上电试读一次，此后主循环每 500 ms 采一次 |
-| `adc_vbus_init()` | G474 实现内部使用 ADC4 句柄，关桥时校准，1 成功 / 0 失败；公共接口不暴露 HAL |
-| `adc_vbus_read(out)` | 启动、轮询、读取、停止，全部成功才发布原始值及电压 |
+| `bsp_adc_vbus_init()` | G474 实现内部使用 ADC4 句柄，关桥时校准，1 成功 / 0 失败；公共接口不暴露 HAL |
+| `bsp_adc_vbus_read(out)` | 启动、轮询、读取、停止，全部成功才发布原始值及电压 |
 | 返回失败 | 输出对象保持原值，调用方不得使用旧样本 |
 
 `HAL_ADC_PollForConversion` 的超时参数为 1 ms；HAL 停止转换也有内部超时，因此这不是严格的整函数 1 ms 耗时上限。正常硬件转换理论约 6.12 µs，尚无实测耗时。不得在 ISR 内调用此驱动。

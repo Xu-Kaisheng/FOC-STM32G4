@@ -113,15 +113,15 @@ DS12288 Rev 6 的 Table 12（第 59、61、63 页）确认 PC0=ADC12_IN6、PC1=A
 
 ```text
 STM32-FOC.uvmpw                  唯一 Keil 入口
-src/app/                        状态机、命令与板级接口
-src/drv/                        PWM、霍尔实现及 ADC 头文件接口
-src/bsp/                        串口与性能统计
+src/app/                        应用层：app/（模式、状态、调度）、cmd/、control/、log/、perf/、status/
+src/algorithm/                  纯算法：sixstep/、foc/
+src/third_party/                第三方库（预留）
+src/bsp/                        板级层：board/、pwm/、hall/、adc_cur/、adc_vbus/、uart/、time/
 G474-FOC.ioc                     唯一 CubeMX 配置
 Core/、Drivers/、MDK-ARM/         生成代码、原厂 SDK、Keil 工程
-platform/                       板级参数、ADC1/2/3 电流与 ADC4 母线实现
 ```
 
-应用不直接包含 HAL 或访问 ADC 句柄；平台实现持有自己的句柄。重新生成工程时应核对 `src/` 和 `platform/` 源码条目仍在，USER CODE 内的应用入口、异常关桥、性能统计钩子均保留。
+应用不直接包含 HAL 或访问 ADC 句柄；板级实现持有自己的句柄。重新生成工程时应核对 `src/app` 与 `src/bsp` 源码条目仍在，USER CODE 内的应用入口、异常关桥、性能统计钩子均保留。目录与依赖规则见 [13-repo-restructure.md](13-repo-restructure.md)。
 
 ## G474 配置与限制
 
