@@ -15,6 +15,7 @@
 #include "app_state.h"
 #include "perf.h"
 #include "perf_clock.h"
+#include "stm32g4xx_it.h"
 
 /* 可控执行耗时只用于核对统计区间，不代表实板测量。 */
 #define TEST_RX_CYCLES    13u
@@ -31,6 +32,7 @@ static uint8_t s_tx_dma_busy;
 ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4;
 TIM_HandleTypeDef htim1;
 UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart3_tx;
 static uint8_t s_measure_cycles;
 static uint32_t s_tick;
 static uint8_t s_rx;
@@ -120,6 +122,29 @@ void HAL_Delay(uint32_t delay)
     assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
     s_tick += delay;
     if (s_measure_cycles != 0u) { test_dwt.CYCCNT += TEST_DELAY_CYCLES; }
+}
+
+/** @brief 模拟系统节拍的中断处理耗时。 */
+void HAL_IncTick(void)
+{
+    s_tick++;
+    test_dwt.CYCCNT += 7u;
+}
+
+/** @brief 模拟 DMA 中断被高优先级 SysTick 抢占，检查嵌套不重复计时。 */
+void HAL_DMA_IRQHandler(DMA_HandleTypeDef *h)
+{
+    assert(h == &hdma_usart3_tx && test_primask == 0u);
+    test_dwt.CYCCNT += 11u;
+    SysTick_Handler();
+    test_dwt.CYCCNT += 13u;
+}
+
+/** @brief 模拟 USART 完成中断，确认统计钩子没有屏蔽整个 HAL 处理。 */
+void HAL_UART_IRQHandler(UART_HandleTypeDef *h)
+{
+    assert(h == &huart3 && test_primask == 0u);
+    test_dwt.CYCCNT += 19u;
 }
 
 /** @brief 测试板名，与生产板级实现分离。 */
@@ -420,11 +445,25 @@ static void test_task_accounting(void)
     assert(snapshot.work_cycles == TEST_TX_CYCLES);
 }
 
+/** @brief 调用真实向量函数，验证 DMA/USART/SysTick 覆盖、嵌套并集和退出边界。 */
+static void test_irq_accounting(void)
+{
+    app_perf_snapshot_t snapshot;
+    reset_hardware(); app_perf_init();
+    test_dwt.CYCCNT += 17u;
+    DMA1_Channel2_IRQHandler();
+    USART3_IRQHandler();
+    test_dwt.CYCCNT += 23u;
+    assert(app_perf_get_snapshot(&snapshot) == 1u);
+    assert(snapshot.irq_cycles == 50u && snapshot.work_cycles == 50u);
+    assert(snapshot.elapsed_cycles == 90u && test_primask == 0u);
+}
+
 /** @brief 回归测试入口。 */
 int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
-    test_task_accounting();
+    test_task_accounting(); test_irq_accounting();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }

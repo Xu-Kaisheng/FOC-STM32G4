@@ -244,7 +244,7 @@ bsp/uart ──→ app/perf      ❌ 不存在，环已破除
 
 空接收、空队列与 DMA 忙检查归入 `poll`，队列推进及提交尝试归入 `work`，外设 DMA 传输时间不计为 CPU 工作。计时入口/出口由应用层的实际工作分支配对调用。
 
-**ISR 钩子**：`Core/Src/stm32g4xx_it.c` 的 SysTick 在 USER CODE 入口/出口配对调用 `app_perf_enter_irq()` / `app_perf_exit_irq()`。`Core/` 是应用的宿主，`Core → app` 属合法方向。
+**ISR 钩子**：`Core/Src/stm32g4xx_it.c` 的 SysTick、DMA1_Channel2 与 USART3 在 USER CODE 入口/出口配对调用 `app_perf_enter_irq()` / `app_perf_exit_irq()`。`Core/` 是应用的宿主，`Core → app` 属合法方向。
 
 ### 4.5 应用层共享状态的处理
 

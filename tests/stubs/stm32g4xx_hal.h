@@ -13,6 +13,7 @@ typedef struct { uint32_t DR; } ADC_TypeDef;
 typedef struct { ADC_TypeDef *Instance; } ADC_HandleTypeDef;
 typedef struct { uint32_t ISR, TDR; } USART_TypeDef;
 typedef struct { USART_TypeDef *Instance; uint32_t ErrorCode; } UART_HandleTypeDef;
+typedef struct { uint32_t unused; } DMA_HandleTypeDef;
 
 extern GPIO_TypeDef test_gpioc;
 extern TIM_TypeDef test_tim1;
@@ -76,6 +77,9 @@ void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state);
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *port, uint16_t pin);
 uint32_t HAL_GetTick(void);
 void HAL_Delay(uint32_t delay);
+void HAL_IncTick(void);
+void HAL_DMA_IRQHandler(DMA_HandleTypeDef *h);
+void HAL_UART_IRQHandler(UART_HandleTypeDef *h);
 HAL_StatusTypeDef HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *h, uint32_t mode);
 HAL_StatusTypeDef HAL_ADC_Start(ADC_HandleTypeDef *h);
 HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef *h, uint32_t timeout);

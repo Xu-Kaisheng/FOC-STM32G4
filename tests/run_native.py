@@ -45,6 +45,7 @@ def main():
     # 运行时回归：除 board.c 外的全部实际模块；板级参数由测试自带桩替代。
     files = [
         "tests/test_runtime.c",
+        "Core/Src/stm32g4xx_it.c",
         "src/bsp/adc_cur/adc_cur.c",
         "src/bsp/adc_vbus/adc_vbus.c",
         "src/bsp/pwm/pwm.c",
@@ -68,7 +69,7 @@ def main():
     # 只使用工作区固定路径生成批处理，编译输出均留在已忽略的 build 目录。
     script.write_text(
         f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
-        'cl /nologo /utf-8 /std:c11 /W4 /WX /Itests/stubs '
+        'cl /nologo /utf-8 /std:c11 /W4 /WX /Itests/stubs /ICore/Inc '
         + includes(BSP_INCLUDES) + ' ' + includes(APP_INCLUDES) + ' '
         + ' '.join(files) + ' /Fobuild/native-tests/ /Febuild/native-tests/runtime.exe\n'
         'if errorlevel 1 exit /b 1\nbuild\\native-tests\\runtime.exe\n', encoding="utf-8")

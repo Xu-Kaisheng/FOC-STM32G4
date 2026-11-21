@@ -214,10 +214,12 @@ void SysTick_Handler(void)
 void DMA1_Channel2_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Channel2_IRQn 0 */
+  app_perf_enter_irq();
 
   /* USER CODE END DMA1_Channel2_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_usart3_tx);
   /* USER CODE BEGIN DMA1_Channel2_IRQn 1 */
+  app_perf_exit_irq();
 
   /* USER CODE END DMA1_Channel2_IRQn 1 */
 }
@@ -228,10 +230,12 @@ void DMA1_Channel2_IRQHandler(void)
 void USART3_IRQHandler(void)
 {
   /* USER CODE BEGIN USART3_IRQn 0 */
+  app_perf_enter_irq();
 
   /* USER CODE END USART3_IRQn 0 */
   HAL_UART_IRQHandler(&huart3);
   /* USER CODE BEGIN USART3_IRQn 1 */
+  app_perf_exit_irq();
 
   /* USER CODE END USART3_IRQn 1 */
 }

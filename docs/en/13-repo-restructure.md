@@ -238,7 +238,7 @@ If `bsp/uart/uart.c` kept calling `app_perf_begin_work()`/`app_perf_end_work()`,
 
 Empty receive/queue checks and DMA-busy checks fall into `poll`; queue progress and submission attempts fall into `work`. Peripheral DMA transfer duration is not CPU work. Actual work branches in the application pair the accounting entry/exit hooks.
 
-**ISR hooks**: SysTick in `Core/Src/stm32g4xx_it.c` pair `app_perf_enter_irq()` / `app_perf_exit_irq()` in USER CODE entry/exit regions. `Core` hosts the application, so `Core → app` is a legal direction.
+**ISR hooks**: SysTick, DMA1_Channel2 and USART3 in `Core/Src/stm32g4xx_it.c` pair `app_perf_enter_irq()` / `app_perf_exit_irq()` in USER CODE entry/exit regions. `Core` hosts the application, so `Core → app` is a legal direction.
 
 ### 4.5 Shared application state
 
