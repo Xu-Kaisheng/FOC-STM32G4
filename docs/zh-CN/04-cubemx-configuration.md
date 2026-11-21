@@ -2,7 +2,7 @@
 
 [English](../en/04-cubemx-configuration.md) | **简体中文** | [文档目录](../README.md)
 
-唯一配置源为 `G474-FOC.ioc`。工具为 CubeMX 6.16.1、STM32CubeG4 v1.6.3、STM32G4xx_DFP 1.5.0；Keil 使用 ARM Compiler 5.06 update 7。
+唯一配置源为 `G474-FOC.ioc`。CubeMX 与固件包版本以该文件的元数据为准；编译器与设备包要求读取 `MDK-ARM/G474-FOC.uvprojx`。Agent 按 [验证与维护](09-validation-and-maintenance.md) 查找并核对本机环境，不在文档维护个人安装清单。
 
 ## 当前生成配置
 

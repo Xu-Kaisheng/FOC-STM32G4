@@ -6,14 +6,24 @@ The sole target is STM32G474RET6 / DevEBox Ver.20, running bridge-off diagnostic
 
 ## Software checks
 
-Run at the root in Git Bash; adjust the checkout path if necessary:
+Agents must discover the installed tools before building, without assuming a drive letter or installation directory:
+
+1. Check `PATH` with `command -v UV4.exe` in Git Bash or `Get-Command UV4.exe` in PowerShell.
+2. If absent, read `Path` under `HKLM\SOFTWARE\Keil\Products\MDK` or `HKLM\SOFTWARE\WOW6432Node\Keil\Products\MDK`. This usually points to the ARM toolchain subdirectory; locate `UV4/UV4.exe` under the installation root and verify it exists. An installed Keil shortcut can also identify the executable.
+3. Set `KEIL_UV4` in the current Git Bash session and always quote it when invoking it. If discovery fails, report the missing tool rather than guessing a path or installing/modifying an SDK.
+4. Read project requirements from `MxCube.Version` and `ProjectManager.FirmwarePackage` in `G474-FOC.ioc` and the compiler/device-pack fields in `.uvprojx`, then check the installed environment. Project metadata is authoritative; do not duplicate a machine-specific software inventory in documentation.
+
+Keep installation paths in shell environment variables or ignored local files. Do not commit usernames, absolute checkout paths, or local discovery output. Run from the repository root in Git Bash:
 
 ```bash
-"C:/Keil_v5/UV4/UV4.exe" -r "E:/Code/STM32-FOC/MDK-ARM/G474-FOC.uvprojx" -j0 -o "E:/Code/STM32-FOC/build-g474.log"
+: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
+: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
+"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
 python -X utf8 tests/run_native.py
+bash tests/check_structure.sh
 ```
 
-Keil uses ARM Compiler 5.06 update 7 and STM32G4xx_DFP 1.5.0. Host tests find existing MSVC with `vswhere`; no SDK installation/modification.
+Keil resolves the relative `-o` path against the project directory, `MDK-ARM/`; `../build-g474.log` therefore writes the log at the repository root. Host tests find existing MSVC with `vswhere`; no SDK installation/modification. Check that the build log is fresh and contains `0 Error(s)`; explain any warnings. Logs and build output are excluded by `.gitignore`.
 
 | Suite | Coverage |
 |---|---|

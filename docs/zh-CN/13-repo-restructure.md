@@ -337,7 +337,7 @@ void       app_set_duty(float duty);
 
 依据：
 
-- 当前工具链是 ARM Compiler 5：`MDK-ARM/G474-FOC.uvprojx` 为 `V5.06 update 7 (build 960)::.\ARMCC`，`uAC6 = 0`；
+- 工程选择 ARM Compiler 5（`MDK-ARM/G474-FOC.uvprojx` 的 `uAC6 = 0`）；具体版本从工程元数据读取并核对本机已安装环境；
 - AC5 的 LTO 能力有限，不做跨模块激进内联；有效 LTO 需迁移 AC6（armclang `-flto`），属独立工程（语法、启动文件、大量警告需返工），不在本次范围；
 - 因此热路径性能由 **"单文件闭环 + `static inline`"** 保证。该规则在 AC5 下是性能合规的**唯一**可验证手段；
 - 若未来采纳 AC6，可重新评估是否放宽 6.2 的热路径单文件限制。

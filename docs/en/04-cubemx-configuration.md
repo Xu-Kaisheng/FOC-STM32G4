@@ -2,7 +2,7 @@
 
 **English** | [简体中文](../zh-CN/04-cubemx-configuration.md) | [Documentation index](../README.md)
 
-The only configuration source is `G474-FOC.ioc`. Tools: CubeMX 6.16.1, STM32CubeG4 v1.6.3, STM32G4xx_DFP 1.5.0, and Keil ARM Compiler 5.06 update 7.
+The only configuration source is `G474-FOC.ioc`; its metadata specifies CubeMX and firmware-package versions. Read compiler and device-pack requirements from `MDK-ARM/G474-FOC.uvprojx`. Agents discover and verify the local environment using [validation and maintenance](09-validation-and-maintenance.md), without maintaining a personal installation inventory in documentation.
 
 ## Current configuration
 

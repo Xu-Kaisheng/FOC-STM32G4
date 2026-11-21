@@ -167,14 +167,16 @@ Local references, not distributed in this repository:
 - Board schematic: `datasheet/STM32G474RET6/STM32G474R开发板-原理图--202508.pdf`, three pages.
 - MCU datasheet: `STM32G474R数据手册.pdf`, DS12288 Rev 6, 236 pages, in the same folder.
 - ADC guidance: `如何在STM32微控制器中获得最佳ADC精度.pdf`, AN2834.
-- CubeMX 6.16.1 `STM32G474R(B-C-E)Tx.xml`, cross-checked against generated GPIO alternates/ADC channels.
-- [STM32CubeG4 v1.6.3](https://github.com/STMicroelectronics/STM32CubeG4/tree/v1.6.3), HAL v1.2.7, CMSIS device v1.2.6; SDK content is read-only.
-- STM32G4xx_DFP 1.5.0, ARM Compiler 5.06 update 7.
+- CubeMX device description `STM32G474R(B-C-E)Tx.xml`, cross-checked against generated GPIO alternates/ADC channels; the CubeMX version is recorded in `.ioc` metadata.
+- [STM32CubeG4](https://github.com/STMicroelectronics/STM32CubeG4); use `.ioc` and vendored SDK metadata for versions. SDK content is read-only.
+- Read Keil compiler/device-pack requirements from `.uvprojx`; agents discover installation locations on the current machine.
 
-At the repository root in Git Bash, adjust the checkout path as needed:
+Locate Keil and set `KEIL_UV4` in the current shell as described in [validation and maintenance](09-validation-and-maintenance.md), then run from the repository root in Git Bash:
 
 ```bash
-"C:/Keil_v5/UV4/UV4.exe" -r "E:/Code/STM32-FOC/MDK-ARM/G474-FOC.uvprojx" -j0 -o "E:/Code/STM32-FOC/build-g474.log"
+: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
+: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
+"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
 python -X utf8 tests/run_native.py
 ```
 

@@ -195,11 +195,19 @@ G474 当前三个电流 ADC 是低频依次软件触发，不能标记为三 ADC
 
 ## 8. 构建与烧录
 
-唯一 Keil 工程：`MDK-ARM/G474-FOC.uvprojx`，可通过根目录 `STM32-FOC.uvmpw` 打开。Windows 在 Git Bash 执行：
+唯一 Keil 工程：`MDK-ARM/G474-FOC.uvprojx`，可通过根目录 `STM32-FOC.uvmpw` 打开。
+
+- Agent 编译前先从 `PATH` 查找 `UV4.exe`；未找到时查询 Windows Keil 安装注册信息（包括 32 位注册表视图）或已有安装位置，并验证可执行文件存在。
+- 仅在当前终端设置 `KEIL_UV4`；禁止将本机安装路径、用户名、仓库绝对路径和本机环境清单写入受版本控制的文件。查找示例见 `docs/zh-CN/09-validation-and-maintenance.md`。
+- 工具链与设备包要求从 `.ioc`、`.uvprojx` 读取并与本机已安装环境核对，不为适配本机擅改工程编译选项。
+- Windows 在仓库根目录的 Git Bash 执行，工程、日志和测试参数均使用仓库相对路径：
 
 ```bash
-"C:/Keil_v5/UV4/UV4.exe" -r "E:/Code/STM32-FOC/MDK-ARM/G474-FOC.uvprojx" -j0 -o "E:/Code/STM32-FOC/build-g474.log"
+: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
+: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
+"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
 python -X utf8 tests/run_native.py
+bash tests/check_structure.sh
 ```
 
 - 编译产物：`MDK-ARM/G474-FOC/G474-FOC.axf|.hex`。

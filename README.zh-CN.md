@@ -80,11 +80,14 @@ STM32-FOC/
 
 ## 编译与验证
 
-软件环境：CubeMX 6.16.1、STM32CubeG4 v1.6.3、STM32G4xx_DFP 1.5.0、ARM Compiler 5.06 update 7。Windows 下在 Git Bash 执行：
+Agent 应先从 `PATH` 查找 `UV4.exe`；未找到时查询 Windows 的 Keil 安装注册信息或已有安装位置，并将核实的可执行文件路径保存在当前终端的 `KEIL_UV4` 环境变量中。不要把本机安装路径、用户名或仓库绝对路径写入受版本控制的文件。工具与设备包要求从 `.ioc` 和 `.uvprojx` 读取，查找方法见 [验证与维护](docs/zh-CN/09-validation-and-maintenance.md)。在仓库根目录的 Git Bash 执行：
 
 ```bash
-"C:/Keil_v5/UV4/UV4.exe" -r "E:/Code/STM32-FOC/MDK-ARM/G474-FOC.uvprojx" -j0 -o "E:/Code/STM32-FOC/build-g474.log"
+: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
+: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
+"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
 python -X utf8 tests/run_native.py
+bash tests/check_structure.sh
 ```
 
 固件输出：`MDK-ARM/G474-FOC/G474-FOC.axf|.hex`。检查日志中的 `0 Error(s)` 并说明 warning。用户已完成临时 PWM 测试并反馈死区为 990 ns；demo 已关闭。下载工具与接线需按实际探针确认。测试与实板验收范围见 [验证与维护](docs/zh-CN/09-validation-and-maintenance.md)。

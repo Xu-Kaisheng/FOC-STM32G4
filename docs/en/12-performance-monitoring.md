@@ -72,4 +72,4 @@ Future current control should bracket real computation and PWM-duty submission w
 3. With bridge off, check one-second PERF logs and CURRENT/SIXSTEP OFF. A mode transition's 200 ms wait increases busy in its window.
 4. Later compare GPIO markers and scope timing against maxima, measuring hook/critical-section overhead and real overrun behavior under load.
 
-Recorded 2026-11-16 software validation: ARMCC 5.06 update 7 produced 0 errors/warnings (Code 28140, RO 1492, RW 104, ZI 4496 bytes); runtime/fault, G474, and performance suites passed. Non-USER-CODE interrupt regions and target compiler options were unchanged for that feature. No hardware performance measurements have been collected.
+Recorded 2026-11-16 software validation: ARMCC produced 0 errors/warnings (Code 28140, RO 1492, RW 104, ZI 4496 bytes); runtime/fault, G474, and performance suites passed. Non-USER-CODE interrupt regions and target compiler options were unchanged for that feature. No hardware performance measurements have been collected.

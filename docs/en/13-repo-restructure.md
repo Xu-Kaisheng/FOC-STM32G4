@@ -326,7 +326,7 @@ The current largest files are `bsp/pwm/pwm_bridge.c` (200) and `app/perf/perf.c`
 
 **Decision: Link Time Optimization stays off.**
 
-- The toolchain is ARM Compiler 5 (`V5.06 update 7 (build 960)::.\ARMCC`, `uAC6 = 0`);
+- The project selects ARM Compiler 5 (`uAC6 = 0` in `MDK-ARM/G474-FOC.uvprojx`); read its version from project metadata and check the installed environment;
 - AC5 LTO is limited; real LTO means migrating to AC6 (`armclang -flto`), a separate project (syntax, startup file, many warnings);
 - Hot-path performance is therefore guaranteed by **"single-file closure + `static inline`"**, the only verifiable means under AC5;
 - If AC6 arrives later, 6.2 can be revisited.

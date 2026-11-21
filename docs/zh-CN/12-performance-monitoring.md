@@ -76,7 +76,7 @@
 
 | 检查 | 结果 |
 |---|---|
-| G474 / ARMCC 5.06 update 7 | 0 Error(s)、0 Warning(s)；Code 28140、RO 1492、RW 104、ZI 4496 字节 |
+| G474 / ARMCC | 0 Error(s)、0 Warning(s)；Code 28140、RO 1492、RW 104、ZI 4496 字节 |
 | 主机回归 | 原运行/故障联锁、G474 平台、性能计时三组均通过 |
 | 生成区与工程选项 | 与本次修改前逐项对比，ISR 非 USER CODE 区域和G474 的 TargetOption 均未改变；原有源码注释保留 |
 

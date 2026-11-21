@@ -165,14 +165,16 @@ G474 已加入 DWT 性能统计，每秒输出有效工作时间/占比、空轮
 - 开发板原理图：`datasheet/STM32G474RET6/STM32G474R开发板-原理图--202508.pdf`，3 页。
 - MCU 数据手册：同目录 `STM32G474R数据手册.pdf`，ST DS12288 Rev 6，236 页。
 - ADC 精度参考：同目录 `如何在STM32微控制器中获得最佳ADC精度.pdf`（AN2834），用于后续参考电压、接地与采样误差评估。
-- 引脚复用核对：本机 CubeMX 6.16.1 的 `STM32G474R(B-C-E)Tx.xml`，并交叉核对实际生成的 GPIO Alternate 和 ADC 通道。
-- 原厂软件包：[STM32CubeG4 v1.6.3](https://github.com/STMicroelectronics/STM32CubeG4/tree/v1.6.3)，HAL v1.2.7、CMSIS device v1.2.6；本机安装 G4 包，工程内 SDK 只读。
-- Keil 设备包：STM32G4xx_DFP 1.5.0。当前 G4 工程使用本机 ARM Compiler 5.06 update 7。
+- 引脚复用核对：CubeMX 设备描述 `STM32G474R(B-C-E)Tx.xml`，并交叉核对实际生成的 GPIO Alternate 和 ADC 通道；CubeMX 版本以 `.ioc` 元数据为准。
+- 原厂软件包：[STM32CubeG4](https://github.com/STMicroelectronics/STM32CubeG4)，具体版本以 `.ioc` 与工程内 SDK 元数据为准；SDK 只读。
+- Keil 编译器与设备包要求从 `.uvprojx` 读取，安装位置由 Agent 在当前机器查找。
 
-在根目录 Git Bash 执行：
+先按 [验证与维护](09-validation-and-maintenance.md) 定位 Keil 并设置当前终端的 `KEIL_UV4`，再在仓库根目录 Git Bash 执行：
 
 ```bash
-"C:/Keil_v5/UV4/UV4.exe" -r "E:/Code/STM32-FOC/MDK-ARM/G474-FOC.uvprojx" -j0 -o "E:/Code/STM32-FOC/build-g474.log"
+: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
+: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
+"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
 python -X utf8 tests/run_native.py
 ```
 

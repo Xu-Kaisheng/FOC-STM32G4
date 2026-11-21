@@ -6,12 +6,24 @@
 
 ## 软件验证入口
 
+Agent 先定位工具，再执行构建；不假设开发者使用相同盘符或安装目录：
+
+1. 在 Git Bash 用 `command -v UV4.exe` 检查 `PATH`，或在 PowerShell 用 `Get-Command UV4.exe` 查找。
+2. 若不在 `PATH`，读取 Windows 的 `HKLM\SOFTWARE\Keil\Products\MDK` 或 `HKLM\SOFTWARE\WOW6432Node\Keil\Products\MDK` 的 `Path`。该值通常指向 ARM 工具链子目录，应据此定位安装根目录下的 `UV4/UV4.exe`，并验证文件存在；也可从已安装 Keil 的快捷方式确认目标。
+3. 将找到的路径设置为当前 Git Bash 会话的 `KEIL_UV4` 环境变量，始终加双引号调用。找不到时报告缺少的工具，不猜路径、不自动安装或修改 SDK。
+4. 从 `G474-FOC.ioc` 的 `MxCube.Version`、`ProjectManager.FirmwarePackage` 和 `.uvprojx` 的编译器、设备包字段读取工程要求，核对本机环境；版本信息以工程元数据为准，不在文档复制本机环境清单。
+
+安装路径只保存在终端环境或已忽略的本地文件中；不要提交用户名、绝对仓库路径及本机探测输出。在仓库根目录 Git Bash 执行：
+
 ```bash
-"C:/Keil_v5/UV4/UV4.exe" -r "E:/Code/STM32-FOC/MDK-ARM/G474-FOC.uvprojx" -j0 -o "E:/Code/STM32-FOC/build-g474.log"
+: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
+: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
+"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
 python -X utf8 tests/run_native.py
+bash tests/check_structure.sh
 ```
 
-Keil 使用 ARM Compiler 5.06 update 7、STM32G4xx_DFP 1.5.0。主机测试使用现有 MSVC 工具链，构建脚本通过 vswhere 定位，不安装或修改 SDK。
+Keil 的 `-o` 相对路径基于工程文件目录 `MDK-ARM/`，因此使用 `../build-g474.log` 将日志写到仓库根目录。主机测试使用现有 MSVC 工具链，构建脚本通过 vswhere 定位，不安装或修改 SDK。构建后检查本次日志的更新时间与 `0 Error(s)`，有 warning 必须解释；日志与构建产物已由 `.gitignore` 排除。
 
 ## 回归范围
 

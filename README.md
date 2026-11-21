@@ -80,11 +80,14 @@ See the [G474 board guide](docs/en/11-g474-board-guide.md) for J4/J5 pin numbers
 
 ## Build and validation
 
-Environment: CubeMX 6.16.1, STM32CubeG4 v1.6.3, STM32G4xx_DFP 1.5.0, ARM Compiler 5.06 update 7. Run in Git Bash on Windows, adjusting the checkout path if necessary:
+Agents should first locate `UV4.exe` on `PATH`. If absent, inspect Windows Keil installation registry entries or existing installation locations, verify the executable, and store its path in the current shell's `KEIL_UV4` environment variable. Do not put machine-specific installation paths, usernames, or absolute checkout paths in version-controlled files. Read tool and device-pack requirements from `.ioc` and `.uvprojx`; see [validation and maintenance](docs/en/09-validation-and-maintenance.md). Run from the repository root in Git Bash:
 
 ```bash
-"C:/Keil_v5/UV4/UV4.exe" -r "E:/Code/STM32-FOC/MDK-ARM/G474-FOC.uvprojx" -j0 -o "E:/Code/STM32-FOC/build-g474.log"
+: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
+: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
+"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
 python -X utf8 tests/run_native.py
+bash tests/check_structure.sh
 ```
 
 Output: `MDK-ARM/G474-FOC/G474-FOC.axf|.hex`. Check for `0 Error(s)` and review warnings. The user has tested the temporary PWM demo and reported 990 ns dead time; the demo is now disabled. Select download tooling and connections for the actual probe. See [validation and maintenance](docs/en/09-validation-and-maintenance.md) for coverage and remaining hardware work.
