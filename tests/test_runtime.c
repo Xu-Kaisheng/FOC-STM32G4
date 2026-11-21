@@ -11,6 +11,15 @@
 #include "app.h"
 #include "app_log.h"
 #include "board.h"
+#include "app_cmd.h"
+#include "app_state.h"
+#include "perf.h"
+#include "perf_clock.h"
+
+/* 可控执行耗时只用于核对统计区间，不代表实板测量。 */
+#define TEST_RX_CYCLES    13u
+#define TEST_TX_CYCLES    29u
+#define TEST_DELAY_CYCLES 37u
 
 GPIO_TypeDef test_gpioc;
 TIM_TypeDef test_tim1;
@@ -22,6 +31,7 @@ static uint8_t s_tx_dma_busy;
 ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4;
 TIM_HandleTypeDef htim1;
 UART_HandleTypeDef huart3;
+static uint8_t s_measure_cycles;
 static uint32_t s_tick;
 static uint8_t s_rx;
 static uint8_t s_board_allow = 1u;
@@ -64,6 +74,7 @@ static void reset_hardware(void)
     s_board_allow = 1u;
     s_verify_boot = 0u;
     s_boot_pwm_ticks = 0u;
+    s_measure_cycles = 0u;
 }
 
 /** @brief 模拟 CCR 写入；不模拟硬件预装载和死区。 */
@@ -108,6 +119,7 @@ void HAL_Delay(uint32_t delay)
 {
     assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
     s_tick += delay;
+    if (s_measure_cycles != 0u) { test_dwt.CYCCNT += TEST_DELAY_CYCLES; }
 }
 
 /** @brief 测试板名，与生产板级实现分离。 */
@@ -157,6 +169,7 @@ HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef *h, uint8_t *out, uint16_t
 {
     (void)h;
     assert(size == 1u && timeout == 0u);
+    if (s_measure_cycles != 0u) { test_dwt.CYCCNT += TEST_RX_CYCLES; }
     if (s_rx == 0u) { return HAL_TIMEOUT; }
     *out = s_rx;
     s_rx = 0u;
@@ -167,6 +180,7 @@ HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef *h, uint8_t *out, uint16_t
 HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, const uint8_t *data, uint16_t size)
 {
     assert(h == &huart3);
+    if (s_measure_cycles != 0u) { test_dwt.CYCCNT += TEST_TX_CYCLES; }
     if (s_tx_dma_busy != 0u) { return HAL_BUSY; }
     assert(s_tx_length + (uint32_t)size <= sizeof(s_tx_capture));
     s_tx_dma_busy = 1u;
@@ -354,10 +368,63 @@ static void test_monitor_only(void)
     assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
 }
 
+/** @brief 实际调度的空接收不计工作，命令处理和 DMA 提交计工作且正确退出。 */
+static void test_task_accounting(void)
+{
+    app_perf_snapshot_t snapshot;
+    reset_hardware(); bsp_uart_init(); app_log_init(); app_perf_init();
+    app_set_mode_raw(APP_MODE_STOP);
+    app_set_last_print_ms(s_tick);
+    s_measure_cycles = 1u;
+
+    // 经过真实 app_task，能发现调用方误把空接收整体包进工作区间。
+    app_task();
+    test_dwt.CYCCNT += 100u;
+    assert(app_perf_get_snapshot(&snapshot) == 1u);
+    assert(snapshot.elapsed_cycles == TEST_RX_CYCLES + 100u);
+    assert(snapshot.work_cycles == 0u);
+
+    s_rx = 'h';
+    app_cmd_task();
+    test_dwt.CYCCNT += 100u;
+    assert(app_perf_get_snapshot(&snapshot) == 1u);
+    assert(snapshot.work_cycles == TEST_DELAY_CYCLES);
+    assert(snapshot.elapsed_cycles == TEST_RX_CYCLES + TEST_DELAY_CYCLES + 100u);
+
+    app_log_task();
+    test_dwt.CYCCNT += 100u;
+    app_log_task();  /* DMA 等待，不能重复提交。 */
+    assert(app_perf_get_snapshot(&snapshot) == 1u);
+    assert(snapshot.work_cycles == TEST_TX_CYCLES);
+    assert(snapshot.elapsed_cycles == TEST_TX_CYCLES + 100u);
+
+    uart_dma_finish();
+    app_log_task();  /* 仅回收，没有下一段；必须退出计时。 */
+    app_log_task();  /* 空队列。 */
+    test_dwt.CYCCNT += 100u;
+    assert(app_perf_get_snapshot(&snapshot) == 1u);
+    assert(snapshot.work_cycles == 0u);
+
+    app_log_write("retry");
+    s_tx_dma_busy = 1u;  /* HAL 拒绝提交，但 BSP 忙标志仍为零。 */
+    app_log_task();
+    test_dwt.CYCCNT += 100u;
+    assert(app_perf_get_snapshot(&snapshot) == 1u);
+    assert(snapshot.work_cycles == TEST_TX_CYCLES);
+    s_tx_dma_busy = 0u;
+    app_log_task();
+    uart_dma_finish();
+    app_log_task();
+    test_dwt.CYCCNT += 100u;
+    assert(app_perf_get_snapshot(&snapshot) == 1u);
+    assert(snapshot.work_cycles == TEST_TX_CYCLES);
+}
+
 /** @brief 回归测试入口。 */
 int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
+    test_task_accounting();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }

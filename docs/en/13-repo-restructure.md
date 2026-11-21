@@ -234,11 +234,11 @@ bsp/uart ──→ app/perf      ❌ gone, cycle broken
 
 If `bsp/uart/uart.c` kept calling `app_perf_begin_work()`/`app_perf_end_work()`, it would depend on `app`, also violating 2.1. Therefore:
 
-> **`app/log` does not time itself.** `app_task()` in `app/app/app.c` wraps `app_log_task()` with `app_perf_begin_work()`/`app_perf_end_work()`. `bsp/uart` contains only hardware primitives.
+> **Time actual work branches in the application layer.** `app_log_task()` pairs `app_perf_begin_work()`/`app_perf_end_work()` around queue reclamation and DMA submission; `app_cmd_task()` times handling after receiving a character. `bsp/uart` contains only hardware primitives.
 
-This changes the "useful work" accounting: the old implementation excluded the TXE wait inside the UART task; with the app-level wrapper that time is counted as work. After the DMA + app/log change, `app_log_task()` only kicks off a transfer and returns, so the difference is negligible; if on-target `[PERF] CPU work=` still shifts by more than 15%, add an `app_perf_pause_work()/app_perf_resume_work()` pair — still driven by the application, never from the BSP.
+Empty receive/queue checks and DMA-busy checks fall into `poll`; queue progress and submission attempts fall into `work`. Peripheral DMA transfer duration is not CPU work. Actual work branches in the application pair the accounting entry/exit hooks.
 
-**ISR hooks**: the two calls in `Core/Src/stm32g4xx_it.c:193/198` become `app_perf_enter_irq()` / `app_perf_exit_irq()`. `Core` hosts the application, so `Core → app` is a legal direction.
+**ISR hooks**: SysTick in `Core/Src/stm32g4xx_it.c` pair `app_perf_enter_irq()` / `app_perf_exit_irq()` in USER CODE entry/exit regions. `Core` hosts the application, so `Core → app` is a legal direction.
 
 ### 4.5 Shared application state
 
@@ -474,7 +474,7 @@ Acceptance: 0 errors; native tests pass; `grep -rn "platform/\|src/drv/" src/` i
 2. add `app/perf/perf.c`, `perf_print.c`, `perf.h`; rename the enum to `APP_PERF_*`;
 3. delete `bsp/perf/`;
 4. rename the two ISR hooks in `Core/Src/stm32g4xx_it.c`;
-5. drop `bsp_perf.h` from `bsp/uart/uart.c`; `app_task()` in `app/app/app.c` times the UART task instead;
+5. drop `bsp_perf.h` from `bsp/uart/uart.c`; keep accounting in the application (currently in actual work branches of `app/log` and `app/cmd`, see 4.4);
 6. update `tests/test_perf.c`.
 
 Acceptance: the 5.3 script passes; no lateral includes inside `bsp/`.

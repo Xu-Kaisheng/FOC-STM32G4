@@ -21,7 +21,9 @@ There is no current loop. Slow ADC diagnostics are not current control. G474 dis
 
 **The CPU continuously polls; WFI sleep is not enabled, so physical active time is near 100%.** `work` does not include every executed instruction and is not a power estimate, RTOS idle metric, or proof of spare compute capacity. It separates instrumented useful work from empty polling to compare diagnostic/control/command workloads.
 
-Coverage includes commands, six-step output, Hall-change logs, periodic ADC/log work, actual UART byte writes, performance formatting, and SysTick. Uninstrumented receive/scheduling checks fall into poll. Control elapsed time includes preemption, reflecting deadlines; its share may overlap IRQ time and must not be added to it. Six-step scheduling is not every 50 µs, so it does not use the current-loop budget. OFF means no calls in the window, not independent proof of hardware output state.
+Coverage includes command handling after receiving a character, six-step output, Hall-change logs, periodic ADC/log work, log-queue reclamation and DMA submission, performance formatting, and SysTick interrupts. Receive checks, empty-queue checks, DMA waits and scheduling checks fall into poll. Peripheral DMA transfer duration is not CPU work. Control elapsed time includes preemption, reflecting deadlines; its share may overlap IRQ time and must not be added to it. Six-step scheduling is not every 50 µs, so it does not use the current-loop budget. OFF means no calls in the window, not independent proof of hardware output state.
+
+`app_task()` no longer wraps the entire command/log task. `app_cmd_task()` starts accounting after receiving a character. `app_log_task()` starts only when a completed chunk needs reclaiming or queued data can be submitted while UART is idle. A HAL-rejected submission still counts as a work attempt and closes its interval. Hooks remain in the application and Core USER CODE regions; the BSP has no dependency on performance accounting.
 
 ## Example output
 
@@ -68,6 +70,7 @@ Future current control should bracket real computation and PWM-duty submission w
 ## Validation
 
 1. Host tests cover union/nesting/wrap/window reset, work spanning windows, the 50 µs boundary, no samples, DWT failure, long windows, and clock changes.
+   Runtime tests also exercise real `app_task()` dispatch to verify empty receive polling, command work, DMA submission, rejected submissions and reclamation-only exits. Injected test cycles are not measurements of hardware hook overhead.
 2. Rebuild G474 with zero errors/warnings. Core interrupt hooks remain in USER CODE; the Keil project includes the module.
 3. With bridge off, check one-second PERF logs and CURRENT/SIXSTEP OFF. A mode transition's 200 ms wait increases busy in its window.
 4. Later compare GPIO markers and scope timing against maxima, measuring hook/critical-section overhead and real overrun behavior under load.

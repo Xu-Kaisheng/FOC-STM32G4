@@ -7,6 +7,7 @@
  * 单人操作队列索引，因此不需要临界区。
  */
 #include "app_log.h"
+#include "perf.h"
 #include "uart.h"
 
 #include <stdarg.h>
@@ -62,23 +63,27 @@ void app_log_task(void)
 {
     uint32_t len;
 
+    // 等待 DMA 或空队列只是轮询；确认有队列工作后再开始计时。
+    if ((bsp_uart_is_tx_busy() != 0u) ||
+        ((s_pending == 0u) && (log_span() == 0u)))
+    {
+        return;
+    }
+    app_perf_begin_work();
+
     // 上一段 DMA 已完成：推进尾部，释放队列空间。
     if (s_pending != 0u)
     {
-        if (bsp_uart_is_tx_busy() != 0u)
-        {
-            return;
-        }
         s_tail = (s_tail + s_pending) % APP_LOG_QUEUE_SIZE;
         s_pending = 0u;
     }
 
     len = log_span();
-    if ((len == 0u) || (bsp_uart_write(&s_queue[s_tail], len) == 0u))
+    if ((len != 0u) && (bsp_uart_write(&s_queue[s_tail], len) != 0u))
     {
-        return;
+        s_pending = len;
     }
-    s_pending = len;
+    app_perf_end_work();
 }
 
 /* ---------------- write ---------------- */

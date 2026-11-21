@@ -75,7 +75,7 @@ Hardware and business are separated:
 
 **TX errors**: USART3 currently uses DMA only for TX. After HAL terminates a failed DMA transmission, the error callback only clears busy. The main loop releases the original chunk and sends the next one without retrying the failed chunk, so its remaining bytes may be lost. RX overrun and errors on other UARTs do not clear TX busy or release a buffer still being transmitted. Host regression covers continued transmission after a DMA error and isolation from RX errors; verify log recovery and independent reception with error injection on hardware while keeping the bridge disabled.
 
-`app_task()` in `app/app/app.c` wraps `app_log_task()` with the useful-work interval for timing.
+`app_log_task()` times reclamation and DMA submission only after confirming there is queue work. Empty queues and DMA-busy returns fall into `poll`. A rejected submission still counts as a work attempt; later main-loop iterations retry it. The BSP has no dependency on application performance accounting.
 
 ## 5. Application and limitations
 

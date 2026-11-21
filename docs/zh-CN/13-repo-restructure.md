@@ -240,11 +240,11 @@ bsp/uart ──→ app/perf      ❌ 不存在，环已破除
 
 `bsp/uart/uart.c` 中原本的 `bsp_perf_work_begin/end()` 改为 `app_perf_begin_work()`/`app_perf_end_work()` 后，`bsp/uart` 将**依赖 app 层**，这同样违反 2.1。因此改为：
 
-> **`app/log` 不做自计时**。测 `app_log_task()` 的耗时由调用方（`app/app/app.c` 的 `app_task()`）在其前后包 `app_perf_begin_work()`/`app_perf_end_work()`。`bsp/uart` 只保留硬件原语。
+> **计时留在应用层的实际工作分支**。`app_log_task()` 只对队列回收与 DMA 提交配对调用 `app_perf_begin_work()`/`app_perf_end_work()`；`app_cmd_task()` 只对收到字符后的处理计时。`bsp/uart` 只保留硬件原语。
 
-注意这会改变"有效工作"的统计口径：原实现在 UART 任务内排除等 TXE 的空转；改由 app 层包裹后，这段时间会计入有效工作。改为 DMA + `app/log` 后 `app_log_task()` 只是启动一次传输就返回，这部分时间可以忽略；若实板 `[PERF] CPU work=` 仍偏差显著（>15%），再补一个 `app_perf_pause_work()`/`app_perf_resume_work()` 机制——仍由 app 层调用，不在 bsp 内发起。
+空接收、空队列与 DMA 忙检查归入 `poll`，队列推进及提交尝试归入 `work`，外设 DMA 传输时间不计为 CPU 工作。计时入口/出口由应用层的实际工作分支配对调用。
 
-**ISR 钩子**：`Core/Src/stm32g4xx_it.c:193/198` 的两处调用改为 `app_perf_enter_irq()` / `app_perf_exit_irq()`。`Core/` 是应用的宿主，`Core → app` 属合法方向。
+**ISR 钩子**：`Core/Src/stm32g4xx_it.c` 的 SysTick 在 USER CODE 入口/出口配对调用 `app_perf_enter_irq()` / `app_perf_exit_irq()`。`Core/` 是应用的宿主，`Core → app` 属合法方向。
 
 ### 4.5 应用层共享状态的处理
 
@@ -485,7 +485,7 @@ void       app_set_duty(float duty);
 2. 新建 `app/perf/perf.c`、`perf_print.c`、`perf.h`，从 `bsp_perf.c` 搬入统计与打印逻辑，枚举改名为 `APP_PERF_*`；
 3. 删除 `bsp/perf/` 目录；
 4. `Core/Src/stm32g4xx_it.c` 两处 ISR 钩子改名为 `app_perf_enter_irq()`/`app_perf_exit_irq()`；
-5. `bsp/uart/uart.c` 移除 `bsp_perf.h` 依赖，自计时改由 `app/app/app.c` 的 `app_task()` 负责；
+5. `bsp/uart/uart.c` 移除 `bsp_perf.h` 依赖；计时留在应用层（当前由 `app/log` 与 `app/cmd` 的实际工作分支负责，见 4.4）；
 6. `tests/test_perf.c` 同步改名与 include。
 
 验收：`sh` 运行 5.3 脚本通过；`bsp/` 内无任何横向 include。

@@ -6,6 +6,7 @@
 #include "app.h"
 #include "app_control.h"
 #include "app_log.h"
+#include "perf.h"
 #include "uart.h"
 
 /* 命令每次调整的步长与显示比例；安全范围由 app_control_set_* 负责钳位。 */
@@ -96,6 +97,8 @@ void app_cmd_task(void)
 
     if (bsp_uart_read_byte(&c) != 0u)
     {
+        app_perf_begin_work();
         handle_command(c);
+        app_perf_end_work();
     }
 }

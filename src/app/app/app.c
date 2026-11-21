@@ -117,15 +117,11 @@ void app_task(void)
 {
     app_mode_t mode;
 
-    // 1) 日志发送：日志模块不自计时，由调用方包裹有效工作区间。
-    app_perf_begin_work();
+    // 1) 日志发送：模块内部只计队列回收和发送推进，空轮询不计入工作。
     app_log_task();
-    app_perf_end_work();
 
     // 2) 串口命令：非阻塞读，读不到立即返回
-    app_perf_begin_work();
     app_cmd_task();
-    app_perf_end_work();
 
     mode = app_get_mode();
 
