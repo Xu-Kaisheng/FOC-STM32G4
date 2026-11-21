@@ -12,7 +12,7 @@ typedef struct { TIM_TypeDef *Instance; } TIM_HandleTypeDef;
 typedef struct { uint32_t DR; } ADC_TypeDef;
 typedef struct { ADC_TypeDef *Instance; } ADC_HandleTypeDef;
 typedef struct { uint32_t ISR, TDR; } USART_TypeDef;
-typedef struct { USART_TypeDef *Instance; } UART_HandleTypeDef;
+typedef struct { USART_TypeDef *Instance; uint32_t ErrorCode; } UART_HandleTypeDef;
 
 extern GPIO_TypeDef test_gpioc;
 extern TIM_TypeDef test_tim1;
@@ -66,6 +66,8 @@ extern TIM_TypeDef test_tim1;
 #define RESET 0u
 #define UART_FLAG_TXE 0x80u
 #define UART_FLAG_ORE 0x08u
+#define HAL_UART_ERROR_ORE 0x08u
+#define HAL_UART_ERROR_DMA 0x10u
 #define __HAL_UART_GET_FLAG(h,f) ((h)->Instance->ISR & (f))
 #define __HAL_UART_CLEAR_OREFLAG(h) ((h)->Instance->ISR &= ~UART_FLAG_ORE)
 
@@ -82,4 +84,5 @@ HAL_StatusTypeDef HAL_ADC_Stop(ADC_HandleTypeDef *h);
 HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef *h, uint8_t *out, uint16_t size, uint32_t timeout);
 HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *h, const uint8_t *data, uint16_t size);
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *h);
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *h);
 #endif

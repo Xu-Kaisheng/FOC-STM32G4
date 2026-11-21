@@ -74,6 +74,7 @@ PC6/PC7/PC8 上拉输入，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_
 | `bsp/uart` | `bsp_uart_is_tx_busy()` | 查询 DMA 是否仍在发送 |
 | `bsp/uart` | `bsp_uart_read_byte(out)` | 非阻塞收一字节并清接收溢出标志 |
 | `bsp/uart` | `HAL_UART_TxCpltCallback()` | TC 中断里只清忙标志 |
+| `bsp/uart` | `HAL_UART_ErrorCallback()` | TX DMA 失败时清忙标志；接收错误不释放发送缓冲区 |
 | `app/log` | `app_log_init()` | 复位 512 字节静态队列 |
 | `app/log` | `app_log_write(fmt,...)` | 格式化并入队；单条最多 127 字节，空间不足整条丢弃 |
 | `app/log` | `app_log_task()` | 主循环推进：上一段发完后，把队首连续区间交给 `bsp_uart_write()` |
@@ -81,6 +82,8 @@ PC6/PC7/PC8 上拉输入，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_
 `bsp/uart` 不含队列、不格式化、**没有 `_task()`**；"每轮主循环推进"属于应用层，见 `app/log`。
 
 **发送路径（DMA）**：CubeMX 配置 DMA1_Channel2 + DMAMUX 请求 `USART3_TX`（NORMAL、字节对齐、内存递增），并打开 DMA1_Channel2 与 USART3 两个中断（优先级 15，最低）。`app_log_task()` 在 `bsp_uart_is_tx_busy()` 为 0 时推进：先按上一段长度前移队尾，再取队首连续区间交给 `bsp_uart_write()`；跨缓冲区末尾时先发到边界，剩余部分下一轮再发。DMA 完成由 BSP 的 TC 回调清忙标志，队列推进由应用层轮询完成——BSP 不需要反向调用 app。
+
+**发送错误**：USART3 当前仅 TX 使用 DMA。HAL 终止失败的 DMA 发送后，错误回调仅清忙标志；主循环按原段长释放队列并发送下一段，不重发失败段，因此可能丢失该段剩余字节。接收溢出及其他串口的错误不清 TX 忙标志，避免释放仍在发送的缓冲区。主机回归验证发送错误后下一段继续发送、接收错误不干扰 TX；实板保持关桥，检查错误注入后的日志恢复与接收独立性。
 
 测 `app_log_task()` 的耗时由 `app/app/app.c` 的 `app_task()` 在前后包裹有效工作区间。
 

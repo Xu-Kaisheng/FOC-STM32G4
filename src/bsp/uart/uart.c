@@ -9,7 +9,7 @@
 
 #include <stddef.h>
 
-/* DMA 发送忙标志：启动时置位，USART3 TC 回调清零。 */
+/* DMA 发送忙标志：启动时置位，USART3 TC 或发送错误回调清零。 */
 static volatile uint8_t s_tx_busy = 0u;
 
 /* ---------------- init ---------------- */
@@ -85,6 +85,20 @@ uint8_t bsp_uart_write(const uint8_t *data, uint32_t len)
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart3)
+    {
+        s_tx_busy = 0u;
+    }
+}
+
+/**
+ * @brief  DMA 发送失败后释放忙标志，允许后续日志继续发送
+ * @param  huart: 触发错误回调的串口句柄
+ * @note   本串口仅 TX 使用 DMA；失败段不重发，由日志队列按原长度释放。
+ */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    // 接收溢出等错误不代表 TX 已停止，不能提前释放仍由 DMA 使用的缓冲区。
+    if ((huart == &huart3) && ((huart->ErrorCode & HAL_UART_ERROR_DMA) != 0u))
     {
         s_tx_busy = 0u;
     }

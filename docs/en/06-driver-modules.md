@@ -64,6 +64,7 @@ Hardware and business are separated:
 | `bsp/uart` | `bsp_uart_is_tx_busy()` | Query whether DMA is still transmitting |
 | `bsp/uart` | `bsp_uart_read_byte(out)` | Nonblocking one-byte RX with overrun recovery |
 | `bsp/uart` | `HAL_UART_TxCpltCallback()` | TC interrupt only clears the busy flag |
+| `bsp/uart` | `HAL_UART_ErrorCallback()` | Clear busy on TX DMA failure; RX errors do not release the TX buffer |
 | `app/log` | `app_log_init()` | Reset the 512-byte static queue |
 | `app/log` | `app_log_write(fmt,...)` | Format and enqueue; max 127 bytes per line, drop the whole line when full |
 | `app/log` | `app_log_task()` | Main-loop pump: after the previous chunk completes, hand the oldest contiguous span to `bsp_uart_write()` |
@@ -71,6 +72,8 @@ Hardware and business are separated:
 `bsp/uart` has no queue, no formatting and **no `_task()`**; main-loop progress belongs to the application (`app/log`).
 
 **TX path (DMA)**: CubeMX configures DMA1_Channel2 with the DMAMUX request `USART3_TX` (NORMAL, byte aligned, memory increment) and enables both DMA1_Channel2 and USART3 interrupts at priority 15 (lowest). `app_log_task()` pumps when `bsp_uart_is_tx_busy()` is 0: advance the tail by the previous chunk length, then hand the contiguous head span to `bsp_uart_write()`. A span wrapping the buffer end is sent in two chunks. The TC callback in the BSP only clears the busy flag; the application polls it, so the BSP never calls back into the application.
+
+**TX errors**: USART3 currently uses DMA only for TX. After HAL terminates a failed DMA transmission, the error callback only clears busy. The main loop releases the original chunk and sends the next one without retrying the failed chunk, so its remaining bytes may be lost. RX overrun and errors on other UARTs do not clear TX busy or release a buffer still being transmitted. Host regression covers continued transmission after a DMA error and isolation from RX errors; verify log recovery and independent reception with error injection on hardware while keeping the bridge disabled.
 
 `app_task()` in `app/app/app.c` wraps `app_log_task()` with the useful-work interval for timing.
 

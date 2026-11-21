@@ -45,6 +45,7 @@ static void reset_hardware(void)
     hadc3.Instance = &s_adcs[2];
     hadc4.Instance = &s_adcs[3];
     huart3.Instance = &s_uart;
+    huart3.ErrorCode = 0u;
     test_tim1.ARR = 4250u;
     test_tim1.RCR = 1u;
     test_tim1.CR1 = TIM_COUNTERMODE_CENTERALIGNED1;
@@ -275,6 +276,37 @@ static void test_log(void)
     assert(s_tx_length == 511u);
 }
 
+/** @brief 发送失败释放在途段，接收错误与其他串口错误不释放发送缓冲区。 */
+static void test_log_dma_error(void)
+{
+    UART_HandleTypeDef other_uart = {0};
+    reset_hardware(); bsp_uart_init(); app_log_init();
+    app_log_write("FAIL");
+    app_log_task();
+    app_log_write("NEXT");
+
+    huart3.ErrorCode = HAL_UART_ERROR_ORE;
+    HAL_UART_ErrorCallback(&huart3);
+    assert(bsp_uart_is_tx_busy() == 1u);
+    other_uart.ErrorCode = HAL_UART_ERROR_DMA;
+    HAL_UART_ErrorCallback(&other_uart);
+    assert(bsp_uart_is_tx_busy() == 1u);
+    app_log_task();
+    assert(s_tx_length == 4u);
+
+    // HAL 在 DMA 错误回调前已终止发送；失败段不重试，下一段仍可发送。
+    s_tx_dma_busy = 0u;
+    huart3.ErrorCode = HAL_UART_ERROR_DMA;
+    HAL_UART_ErrorCallback(&huart3);
+    assert(bsp_uart_is_tx_busy() == 0u);
+    app_log_task();
+    assert(s_tx_length == 8u && memcmp(&s_tx_capture[4], "NEXT", 4u) == 0);
+    assert(bsp_uart_is_tx_busy() == 1u);
+    uart_dma_finish();
+    app_log_task();
+    assert(bsp_uart_is_tx_busy() == 0u);
+}
+
 /** @brief 验证实际应用启动、反转、停机及 ADC 故障锁存。 */
 static void test_application(void)
 {
@@ -325,7 +357,7 @@ static void test_monitor_only(void)
 /** @brief 回归测试入口。 */
 int32_t main(void)
 {
-    test_pwm(); test_hall(); test_log(); test_application(); test_monitor_only();
+    test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }
