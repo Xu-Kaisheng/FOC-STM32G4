@@ -23,7 +23,7 @@
 /* 硬件输出回调；由应用层注入，算法层不关心具体实现。 */
 typedef struct
 {
-    void (*enable_phase)(uint8_t phase, uint8_t enable);
+    uint8_t (*apply_pair)(uint8_t high, uint8_t low);
     void (*set_duty_raw)(float du, float dv, float dw);
 } alg_sixstep_io_t;
 
@@ -31,7 +31,7 @@ typedef struct
 
 /**
  * @brief  注入硬件输出回调
- * @param  io: 回调表；传 NULL 表示禁用输出（apply 变成空操作）
+ * @param  io: 回调表；传 NULL 表示禁用输出（apply 返回失败）
  */
 void alg_sixstep_init(const alg_sixstep_io_t *io);
 
@@ -59,9 +59,9 @@ uint8_t alg_sixstep_next_step(uint8_t step, uint8_t forward);
  * @brief  按指定步与占空比驱动三相
  * @param  step: 换相步 0~5
  * @param  duty: 高相占空比（调用方负责钳位）
- * @note   先关悬空相，再写占空比，最后打开高/低相；
- *         顺序保证 MOE 由后两步的写 CCER 保持有效。
+ * @retval 1 输出提交成功；0 回调缺失或驱动拒绝，调用方必须停机
+ * @note   三相预先维护同一占空比；回调一次提交高相斩波、低相常通及第三相悬空。
  */
-void alg_sixstep_apply(uint8_t step, float duty);
+uint8_t alg_sixstep_apply(uint8_t step, float duty);
 
 #endif /* ALG_SIXSTEP_H */

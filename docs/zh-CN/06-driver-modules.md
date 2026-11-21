@@ -14,8 +14,8 @@
 | `bsp_pwm_start()` | 关桥状态下复位计数并提交预装载，再使能六路输出、MOE 和计数器 |
 | `bsp_pwm_check_ready()` | 三相自检，必须六路成对使能 |
 | `bsp_pwm_set_duty(du,dv,dw)` | FOC 用，钳位 5%～92% |
-| `bsp_pwm_set_duty_raw(du,dv,dw)` | 六步用，允许低相 0%，上限 92% |
-| `bsp_pwm_enable_phase(phase,en)` | 只切换该相 CCxE/CCxNE，不停止计数器 |
+| `bsp_pwm_set_duty_raw(du,dv,dw)` | 允许初始化清零，上限 92%；六步运行时三相维护相同非零占空比 |
+| `bsp_pwm_apply_pair(high,low)` | 准备三相模式与使能，再用单次 COM 提交；返回 1 成功、0 拒绝，失败后调用方必须停机 |
 | `bsp_pwm_enable_bridge(en)` | 三相开桥或无条件关桥；返回 1 成功、0 拒绝 |
 | `bsp_pwm_enable_bridge_sixstep(high,low)` | 指定两相成对使能、第三相悬空才开桥；返回 1 成功、0 拒绝且已关桥 |
 | `bsp_pwm_is_bridge_enabled()` | 读取桥使能的软件影子，不代表硬件过流锁存已解除 |
@@ -24,17 +24,31 @@
 
 ### 启动与联锁
 
-当前 G474 的开桥策略禁止使能。保留的六步驱动路径供后续验证，启动流程为：关桥 → 停 PWM → 等 200 ms → 占空比清零 → bsp_pwm_start → 三相自检 → app_apply_step → 六步专用开桥检查。任一步拒绝开桥，应用退回 STOP。
+当前 G474 的开桥策略禁止使能。保留的六步驱动路径供后续验证，启动流程为：关桥 → 停 PWM → 等 200 ms → 三相装入相同占空比 → bsp_pwm_start → 三相自检 → alg_sixstep_apply → 六步专用开桥检查。启动在 MOE 关闭时启用 CCPC、关闭外部 COM 触发并恢复三相 PWM1，提交模式和占空比后才置 MOE/CEN。任一步拒绝开桥，应用退回 STOP。
 
-两类联锁共用波形配置检查：MOE/CEN 有效、ARR=4250、PSC=0、RCR=1、中心对齐模式 1、CKD=1、DTG=149、OSSI/OSSR 有效、PWM1、CCR 预装载及主/互补输出高有效。三相自检要求使能掩码 0x555；六步入口要求指定两相的掩码精确匹配，避免“任意两相开了就通过”。
+两类联锁共用波形配置检查：MOE/CEN 有效、ARR=4250、PSC=0、RCR=1、中心对齐模式 1、CKD=1、DTG=149、OSSI/OSSR 有效、CCR 预装载及主/互补输出高有效；要求 CCPC=1、CCUS=0、UDIS=0、三相空闲电平为低。三相自检要求 PWM1 和使能掩码 0x555；六步入口要求指定两相掩码、高相 PWM1、其余相强制无效，以及三路 CCR 相同且非零。
 
-开桥前触发更新事件提交 CCR，避免使用上次运行或自检留下的占空比。该动作适用于当前软件触发 ADC 的 v0.1；后续改硬件触发时必须重新核对更新事件和采样时序。
+开桥前提交 COM 和更新事件，确保读回的模式、使能和 CCR 预装载均已生效。运行中换相只产生 COM，不使用 UG、不重置计数器。该动作适用于当前软件触发 ADC 的 v0.1；后续改硬件触发时必须重新核对更新事件和采样时序。
 
-使能 CCxE/CCxNE 是允许输出互补 PWM，不代表上下管同时导通。HAL_TIM_PWM_Start 只开启主输出，互补输出由 HAL_TIMEx_PWMN_Start 单独控制；本模块显式管理六路使能。单相悬空只改 CCER，不能调用会影响 MOE/计数器的 HAL 停机接口。
+使能 CCxE/CCxNE 是允许输出互补 PWM，不代表上下管同时导通。HAL_TIM_PWM_Start 只开启主输出，互补输出由 HAL_TIMEx_PWMN_Start 单独控制；本模块显式管理六路使能。
+
+### COM 输出组合与调用约束
+
+| 角色 | OCxM | CCxE / CCxNE | 输出 |
+|---|---|---|---|
+| 高相 | PWM1 | 1 / 1 | 高侧斩波、低侧互补，保留硬件死区 |
+| 低相 | 强制无效 | 1 / 1 | OCREF 无效，高侧关、低侧常通 |
+| 悬空相 | 强制无效 | 0 / 0 | 两路关闭 |
+
+算法通过应用注入的 `apply_pair` 回调一次提交组合，返回失败时应用关桥停 PWM 并退回 STOP。三相 CCR 先维护可用占空比；调占空比在下一次允许的 UEV 生效，COM 只提交模式与使能。因此占空比尚未更新时，换相仍使用上一份完整占空比。COM 不自动对齐载波边界，引脚边沿还受 CNT 和死区影响。
+
+输出接口只由主循环单一调用方使用，不能与 ISR 中的输出配置并发。CCR 换算先完成，再用 UDIS 保护三次寄存器写入并恢复原状态；期间计数器继续运行，但恰好遇到的更新事件会被禁止，更新/TRGO 可能延后。改成同步 ADC 或电流环前必须重新设计更新窗口。
+
+实板验证先保持 CTRL_SD=0，观察全部六路 PWM：覆盖六步正反向、低相常通、第三相关闭、调占空比、停止再启动及故障关断；核对 COM 切换附近的互补死区和载波连续性。主机模型仅验证 UEV/COM 寄存器提交语义，不代表电气波形或功率级验证。
 
 ### 故障关断
 
-NMI、HardFault、MemManage、BusFault、UsageFault 及 Error_Handler 在死循环前调用 bsp_pwm_stop_emergency。清除 AOE 是为了防止更新事件自动恢复 MOE。故障后保持停机直至系统复位；该函数不能处理 CPU 已完全失去执行能力的情况。
+NMI、HardFault、MemManage、BusFault、UsageFault 及 Error_Handler 在死循环前调用 bsp_pwm_stop_emergency。先拉低 SD、清除 MOE/AOE，再清全部使能并用 COM 提交，最后停计数器；关断不等待自然更新。清除 AOE 是为了防止更新事件自动恢复 MOE。正常停机同样清除待提交使能。故障后保持停机直至系统复位；该函数不能处理 CPU 已完全失去执行能力的情况。
 
 ## 2. 电流采样：bsp/adc_cur
 
@@ -100,7 +114,7 @@ PC6/PC7/PC8 上拉输入，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_
 | 模块 | 职责 |
 |---|---|
 | `algorithm/sixstep` | 换相表、下一步计算、按步施加三相。**纯算法**，只 include 标准 C；硬件输出通过 `alg_sixstep_io_t` 回调完成 |
-| `app/control` | 六步参数（步号、占空比、电频率）与台架限幅；把 BSP 的 `bsp_pwm_enable_phase/set_duty_raw` 注入算法；`app_control_task()` 按步间隔推进 |
+| `app/control` | 六步参数（步号、占空比、电频率）与台架限幅；把 BSP 的 `bsp_pwm_apply_pair/set_duty_raw` 注入算法；`app_control_task()` 按步间隔推进 |
 
 调用关系：
 
@@ -108,7 +122,7 @@ PC6/PC7/PC8 上拉输入，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_
 app_task → app_control_task → alg_sixstep_next_step / alg_sixstep_apply
                                       │ 回调
                                       ▼
-                              bsp_pwm_enable_phase / bsp_pwm_set_duty_raw
+                              bsp_pwm_apply_pair / bsp_pwm_set_duty_raw
 ```
 
 算法层不 include 任何 BSP/应用头文件，因此可以脱离硬件做主机测试，也能被将来的 FOC 复用同一套回调机制。开桥联锁仍由 `app/control` 调用 `bsp_pwm_enable_bridge_sixstep()` 完成。

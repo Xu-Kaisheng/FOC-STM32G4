@@ -78,37 +78,22 @@ uint8_t alg_sixstep_next_step(uint8_t step, uint8_t forward)
  * @brief  按指定步与占空比驱动三相
  * @param  step: 换相步 0~5
  * @param  duty: 高相占空比（调用方负责钳位）
+ * @retval 1 输出提交成功；0 输出接口不可用或提交失败
  */
-void alg_sixstep_apply(uint8_t step, float duty)
+uint8_t alg_sixstep_apply(uint8_t step, float duty)
 {
     uint8_t hi;
     uint8_t lo;
-    float d[3] = { 0.0f, 0.0f, 0.0f };
-    uint8_t i;
 
-    if ((s_io == NULL) || (s_io->enable_phase == NULL) || (s_io->set_duty_raw == NULL))
+    if ((s_io == NULL) || (s_io->apply_pair == NULL) || (s_io->set_duty_raw == NULL))
     {
-        return;
+        return 0u;
     }
 
     alg_sixstep_get_phases(step, &hi, &lo);
 
-    d[hi] = duty;   /* 高相斩波 */
-    d[lo] = 0.0f;   /* 低相上管常关，下管常通 */
-
-    // 1) 只关掉不参与导通的相（保持另一相连续导通，避免换相时电流被打断）
-    for (i = 0u; i < 3u; i++)
-    {
-        if ((i != hi) && (i != lo))
-        {
-            s_io->enable_phase(i, 0u);
-        }
-    }
-
-    // 2) 写占空比
-    s_io->set_duty_raw(d[ALG_SIXSTEP_PHASE_U], d[ALG_SIXSTEP_PHASE_V], d[ALG_SIXSTEP_PHASE_W]);
-
-    // 3) 打开参与导通的两相
-    s_io->enable_phase(hi, 1u);
-    s_io->enable_phase(lo, 1u);
+    // 三相保持可用占空比，换高相不再依赖把该相 CCR 从零改为斩波值。
+    s_io->set_duty_raw(duty, duty, duty);
+    // 高相斩波、低相上管常关下管常通；第三相悬空，与两相配置一次提交。
+    return s_io->apply_pair(hi, lo);
 }

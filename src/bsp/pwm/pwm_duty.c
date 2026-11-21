@@ -42,14 +42,25 @@ static float clamp_duty(float d)
  * @brief  把三相占空比一次性写入 CCR1/2/3
  * @param  d: 已钳位的三相占空比，索引与 PHASE_U/V/W 一致
  * @note   中心对齐下 duty = CCR / ARR；CCR 已开预装载，下一个更新事件生效。
- *         "钳位 + 写 CCR"必须在同一次调用内完成，拆开会在中间被中断看到
- *         一半新一半旧的三相值（见 6.2 节第 3 条）。
+ *         写入前先禁止 UEV 搬运，避免三次写入之间产生更新而装载半组新值。
  */
 static inline void pwm_write_ccr3(const float d[3])
 {
-    TIM1->CCR1 = (uint32_t)(d[PHASE_U] * PWM_ARR);
-    TIM1->CCR2 = (uint32_t)(d[PHASE_V] * PWM_ARR);
-    TIM1->CCR3 = (uint32_t)(d[PHASE_W] * PWM_ARR);
+    const float arr = PWM_ARR;
+    const uint32_t cu = (uint32_t)(d[PHASE_U] * arr);
+    const uint32_t cv = (uint32_t)(d[PHASE_V] * arr);
+    const uint32_t cw = (uint32_t)(d[PHASE_W] * arr);
+    const uint32_t udis = TIM1->CR1 & TIM_CR1_UDIS;
+
+    // 浮点换算已完成；仅在三次寄存器写入期间阻止更新，计数器不停止。
+    SET_BIT(TIM1->CR1, TIM_CR1_UDIS);
+    WRITE_REG(TIM1->CCR1, cu);
+    WRITE_REG(TIM1->CCR2, cv);
+    WRITE_REG(TIM1->CCR3, cw);
+    if (udis == 0u)
+    {
+        CLEAR_BIT(TIM1->CR1, TIM_CR1_UDIS);
+    }
 }
 
 /* ---------------- write ---------------- */
@@ -69,9 +80,9 @@ void bsp_pwm_set_duty(float du, float dv, float dw)
 }
 
 /**
- * @brief  设置三相占空比（六步用，允许 0%）
+ * @brief  设置三相占空比（允许初始化时清零）
  * @param  du/dv/dw: 0.0~1.0
- * @note   六步换相时"非导通相"必须真的是 0%（下管常通），不能被钳到 5%
+ * @note   两相驱动时三相写相同占空比；低相常通与悬空通过模式和使能控制。
  */
 void bsp_pwm_set_duty_raw(float du, float dv, float dw)
 {

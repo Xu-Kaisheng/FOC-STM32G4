@@ -49,6 +49,7 @@ STM32-FOC/
 | MCU | STM32G474RET6，LQFP64，Cortex-M4F，512 KB Flash、128 KB SRAM |
 | 时钟 | HSI 16 MHz / 4 × 85 / 2 = 170 MHz |
 | PWM | 中心对齐 20 kHz，PSC=0、ARR=4250、RCR=1 |
+| 六步输出 | 三相 CCR 维护相同占空比；PWM1／强制无效／关闭经 COM 同时提交，开桥仍禁用 |
 | 死区 | DTG=149，CKD=1，1 µs |
 | 电流采样 | ADC1/2/3 独立规则组，依次软件触发；尚未同步采样 |
 | VBUS | ADC4_IN3，PB12，`raw × 3.3 × 25 / 4096`；当前仅监视 |

@@ -7,7 +7,7 @@
 typedef enum { HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT } HAL_StatusTypeDef;
 typedef enum { GPIO_PIN_RESET, GPIO_PIN_SET } GPIO_PinState;
 typedef struct { uint32_t IDR, ODR, BRR; } GPIO_TypeDef;
-typedef struct { uint32_t CR1, CCER, BDTR, ARR, PSC, RCR, CCMR1, CCMR2, CNT, EGR, CCR1, CCR2, CCR3; } TIM_TypeDef;
+typedef struct { uint32_t CR1, CR2, CCER, BDTR, ARR, PSC, RCR, CCMR1, CCMR2, CNT, EGR, CCR1, CCR2, CCR3; } TIM_TypeDef;
 typedef struct { TIM_TypeDef *Instance; } TIM_HandleTypeDef;
 typedef struct { uint32_t DR; } ADC_TypeDef;
 typedef struct { ADC_TypeDef *Instance; } ADC_HandleTypeDef;
@@ -27,6 +27,15 @@ extern TIM_TypeDef test_tim1;
 #define TIM_CHANNEL_2 4u
 #define TIM_CHANNEL_3 8u
 #define TIM_CR1_CEN 1u
+#define TIM_CR1_UDIS 2u
+#define TIM_CR2_CCPC 1u
+#define TIM_CR2_CCUS 4u
+#define TIM_CR2_OIS1 0x100u
+#define TIM_CR2_OIS1N 0x200u
+#define TIM_CR2_OIS2 0x400u
+#define TIM_CR2_OIS2N 0x800u
+#define TIM_CR2_OIS3 0x1000u
+#define TIM_CR2_OIS3N 0x2000u
 #define TIM_CR1_CMS 0x60u
 #define TIM_CR1_CKD 0x300u
 #define TIM_COUNTERMODE_CENTERALIGNED1 0x20u
@@ -57,7 +66,13 @@ extern TIM_TypeDef test_tim1;
 #define TIM_CCMR2_OC3M 0x10070u
 #define TIM_CCMR2_OC3PE 8u
 #define TIM_OCMODE_PWM1 0x60u
+#define TIM_OCMODE_FORCED_INACTIVE 0x40u
 #define TIM_EGR_UG 1u
+#define TIM_EGR_COMG 0x20u
+#define WRITE_REG(reg, value) test_pwm_write_reg(&(reg), (value))
+#define MODIFY_REG(reg, mask, value) WRITE_REG((reg), (((reg) & ~(mask)) | (value)))
+#define SET_BIT(reg, mask) WRITE_REG((reg), ((reg) | (mask)))
+#define CLEAR_BIT(reg, mask) WRITE_REG((reg), ((reg) & ~(mask)))
 #define __HAL_TIM_ENABLE(h) ((h)->Instance->CR1 |= TIM_CR1_CEN)
 #define __HAL_TIM_DISABLE(h) ((h)->Instance->CR1 &= ~TIM_CR1_CEN)
 #define __HAL_TIM_SET_COMPARE(h,c,v) test_set_compare((h),(c),(v))
@@ -73,6 +88,7 @@ extern TIM_TypeDef test_tim1;
 #define __HAL_UART_CLEAR_OREFLAG(h) ((h)->Instance->ISR &= ~UART_FLAG_ORE)
 
 void test_set_compare(TIM_HandleTypeDef *h, uint32_t channel, uint32_t value);
+void test_pwm_write_reg(uint32_t *reg, uint32_t value);
 void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state);
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *port, uint16_t pin);
 uint32_t HAL_GetTick(void);

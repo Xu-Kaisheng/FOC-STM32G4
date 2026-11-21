@@ -22,7 +22,6 @@
 #define PWM_DEADTIME_DTG  bsp_board_get_deadtime_dtg()
 #define PWM_PRESCALER     0u
 #define PWM_REPETITION    1u
-#define PWM_CCMR_CHANNEL_SHIFT 8u
 
 /* 三对互补输出在 CCER 里的极性位：任何一位为 1 都说明配置被改坏 */
 #define PWM_CCER_POLARITY (TIM_CCER_CC1P | TIM_CCER_CC1NP | \
@@ -45,16 +44,19 @@ static uint8_t s_bridge_enabled = 0u;
 /**
  * @brief  按指定输出组合检查 PWM 的波形配置与运行状态
  * @param  expected_outputs: 必须精确匹配的三相输出使能位
+ * @param  high: 斩波相；PWM_PHASE_COUNT 表示三相均为 PWM1 的自检模式
  * @retval 1 全部满足；0 任一项不满足
  * @note   这是最后一道防线。CubeMX 配置被改坏（例如死区被清 0、周期被改错）时，
  *         这里会拦住，上层就不允许使能 CTRL_SD，从而避免"半开桥"带电运行。
  */
-static uint8_t pwm_check_outputs(uint32_t expected_outputs)
+static uint8_t pwm_check_outputs(uint32_t expected_outputs, uint32_t high)
 {
     const uint32_t ccer = TIM1->CCER;
     const uint32_t bdtr = TIM1->BDTR;
     const uint32_t cr1  = TIM1->CR1;
     const uint32_t arr  = TIM1->ARR;
+    uint32_t modes[PWM_PHASE_COUNT];
+    uint32_t i;
 
     /* 精确匹配成对输出：六步必须留一相悬空，自检则要求六路全部使能。 */
     if (((ccer & PWM_CCER_ALL) != expected_outputs) ||
@@ -72,6 +74,13 @@ static uint8_t pwm_check_outputs(uint32_t expected_outputs)
     {
         return 0u;
     }
+    // COM 只允许软件触发；空闲电平必须为低，UDIS 不能阻止启动时的 CCR 提交。
+    if (((TIM1->CR2 & (TIM_CR2_CCPC | TIM_CR2_CCUS | TIM_CR2_OIS1 | TIM_CR2_OIS1N |
+                       TIM_CR2_OIS2 | TIM_CR2_OIS2N | TIM_CR2_OIS3 | TIM_CR2_OIS3N)) != TIM_CR2_CCPC) ||
+        ((cr1 & TIM_CR1_UDIS) != 0u))
+    {
+        return 0u;
+    }
     /* 必须是设计的 1 us 死区，仅检查非零不能排除过短死区。 */
     if (((bdtr & TIM_BDTR_DTG) != PWM_DEADTIME_DTG) ||
         ((bdtr & (TIM_BDTR_OSSI | TIM_BDTR_OSSR)) != (TIM_BDTR_OSSI | TIM_BDTR_OSSR)))
@@ -85,14 +94,26 @@ static uint8_t pwm_check_outputs(uint32_t expected_outputs)
     {
         return 0u;
     }
-    // 极性和 PWM1 模式必须配套，防止模式改动后占空比语义发生反转。
+    // 极性和输出模式必须配套；两相输出仅高相为 PWM1，其余为强制无效。
+    for (i = 0u; i < PWM_PHASE_COUNT; i++)
+    {
+        modes[i] = ((high == PWM_PHASE_COUNT) || (i == high)) ?
+                   TIM_OCMODE_PWM1 : TIM_OCMODE_FORCED_INACTIVE;
+    }
     if (((TIM1->CCMR1 & (TIM_CCMR1_CC1S | TIM_CCMR1_CC2S |
                         TIM_CCMR1_OC1M | TIM_CCMR1_OC2M |
                         TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE)) !=
-         (TIM_OCMODE_PWM1 | (TIM_OCMODE_PWM1 << PWM_CCMR_CHANNEL_SHIFT) |
+         (modes[PHASE_U] | (modes[PHASE_V] << PWM_CCMR_CHANNEL_SHIFT) |
           TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE)) ||
         ((TIM1->CCMR2 & (TIM_CCMR2_CC3S | TIM_CCMR2_OC3M | TIM_CCMR2_OC3PE)) !=
-         (TIM_OCMODE_PWM1 | TIM_CCMR2_OC3PE)))
+         (modes[PHASE_W] | TIM_CCMR2_OC3PE)))
+    {
+        return 0u;
+    }
+    // 开桥时三相必须都已准备同一个非零比较值，不能把旧的零值带到下次斩波相。
+    if ((high != PWM_PHASE_COUNT) &&
+        ((TIM1->CCR1 == 0u) || (TIM1->CCR1 > arr) ||
+         (TIM1->CCR1 != TIM1->CCR2) || (TIM1->CCR1 != TIM1->CCR3)))
     {
         return 0u;
     }
@@ -107,7 +128,7 @@ static uint8_t pwm_check_outputs(uint32_t expected_outputs)
  */
 uint8_t bsp_pwm_check_ready(void)
 {
-    return pwm_check_outputs(PWM_CCER_ALL);
+    return pwm_check_outputs(PWM_CCER_ALL, PWM_PHASE_COUNT);
 }
 
 /**
@@ -125,15 +146,16 @@ uint8_t bsp_pwm_is_bridge_enabled(void)
  * @brief  按预期输出组合控制驱动板 H 桥总开关（CTRL_SD）
  * @param  enable: 1 使能，0 关断
  * @param  expected_outputs: 预期成对使能的输出组合
+ * @param  high: 斩波相或三相 PWM1 自检标记
  * @retval 1 成功；0 联锁拒绝且已关桥
  * @note   **安全联锁**：只有指定输出组合检查通过才允许拉高 CTRL_SD。
  *         因为一旦桥被使能而 PWM 处于半开状态，功率级就会进入非受控导通，
  *         轻则电流不对称、体二极管过热，重则烧管。
  */
-static uint8_t pwm_bridge_apply(uint8_t enable, uint32_t expected_outputs)
+static uint8_t pwm_bridge_apply(uint8_t enable, uint32_t expected_outputs, uint32_t high)
 {
     if ((enable != 0u) && ((bsp_board_get_drive_allowed() == 0u) ||
-                            (pwm_check_outputs(expected_outputs) == 0u)))
+                            (pwm_check_outputs(expected_outputs, high) == 0u)))
     {
         /* 拒绝使能：PWM 未就绪时开桥等于把六个管子交给不确定状态 */
         s_bridge_enabled = 0u;
@@ -143,8 +165,9 @@ static uint8_t pwm_bridge_apply(uint8_t enable, uint32_t expected_outputs)
 
     if ((enable != 0u) && (s_bridge_enabled == 0u))
     {
-        // 开桥前提交控制层写入的 CCR，避免首个 PWM 周期仍使用旧预装载值。
-        TIM1->EGR = TIM_EGR_UG;
+        // 读回检查的是预装载值；开桥前再次提交模式和 CCR，确保实际输出与检查一致。
+        WRITE_REG(TIM1->EGR, TIM_EGR_COMG);
+        WRITE_REG(TIM1->EGR, TIM_EGR_UG);
     }
     /* CTRL_SD 高有效：驱动板光耦导通 -> SD_IN 拉低 -> IR2110 使能 */
     HAL_GPIO_WritePin(CTRL_SD_GPIO_Port, CTRL_SD_Pin,
@@ -160,7 +183,7 @@ static uint8_t pwm_bridge_apply(uint8_t enable, uint32_t expected_outputs)
  */
 uint8_t bsp_pwm_enable_bridge(uint8_t enable)
 {
-    return pwm_bridge_apply(enable, PWM_CCER_ALL);
+    return pwm_bridge_apply(enable, PWM_CCER_ALL, PWM_PHASE_COUNT);
 }
 
 /**
@@ -176,7 +199,7 @@ uint8_t bsp_pwm_enable_bridge_sixstep(pwm_phase_t high, pwm_phase_t low)
         (void)bsp_pwm_enable_bridge(0u);
         return 0u;
     }
-    return pwm_bridge_apply(1u, s_phase_outputs[high] | s_phase_outputs[low]);
+    return pwm_bridge_apply(1u, s_phase_outputs[high] | s_phase_outputs[low], (uint32_t)high);
 }
 
 /* ---------------- hook ---------------- */
@@ -193,7 +216,8 @@ void bsp_pwm_stop_emergency(void)
     CTRL_SD_GPIO_Port->BRR = CTRL_SD_Pin;
     // 同时清 AOE，防止计数器停止前的更新事件重新置位 MOE。
     TIM1->BDTR &= ~(TIM_BDTR_MOE | TIM_BDTR_AOE);
-    TIM1->CCER &= ~PWM_CCER_ALL;
+    CLEAR_BIT(TIM1->CCER, PWM_CCER_ALL);
+    WRITE_REG(TIM1->EGR, TIM_EGR_COMG); /* MOE 已关闭，立即清除控制预装载中的使能 */
     TIM1->CR1 &= ~TIM_CR1_CEN;
     __DSB();
     s_bridge_enabled = 0u;

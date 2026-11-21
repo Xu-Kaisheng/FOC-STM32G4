@@ -57,9 +57,11 @@ Step interval is `floor(1000/(6×f_e))` ms; at most one step per iteration. This
 
 ## 4. Mode change and start
 
-A real transition lowers SD, stops PWM, then waits 200 ms. A command for the current mode returns unchanged. G474 rejects forward/reverse. The retained locked path checks ADC readiness, clears duty, starts TIM1, checks all pairs, applies the step, checks the selected two phases, commits preload, and enables SD. Any rejection stops PWM/bridge and returns STOP; SIXSTEP is reported only after success.
+A real transition lowers SD, stops PWM, then waits 200 ms. A command for the current mode returns unchanged. G474 rejects forward/reverse. The retained locked path checks ADC readiness, prepares equal duties, starts TIM1 with PWM1 modes and CCR values committed, checks all pairs, then calls `alg_sixstep_apply`. Its application-injected callback commits high-phase PWM1, low-phase forced inactive and the third phase disabled with one COM. The enable interlock checks the exact modes/pairs and equal nonzero CCRs, commits preloads, then enables SD. Any rejection stops PWM/bridge and returns STOP; SIXSTEP is reported only after success.
 
 Three-phase check requires `0x555`; six-step requires the selected two-phase mask. Enabled channels are not simultaneously conducting MOSFETs; TIM1 generates complementary timing and dead time.
+
+Running commutation changes output roles through COM without resetting the counter; duty updates use UEV to transfer a complete set. Submission failure immediately stops power/PWM and returns STOP. Output APIs require one main-loop writer; see the [PWM driver](06-driver-modules.md) for constraints and validation.
 
 ## 5. Failures
 

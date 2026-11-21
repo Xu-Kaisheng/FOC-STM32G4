@@ -24,7 +24,7 @@ void bsp_pwm_init(void)
 
 /**
  * @brief  启动三相 PWM：主输出 + 互补输出 + MOE + 计数器，一次到位
- * @note   先装载占空比并复位计数，再执行"MOE -> CCER -> CEN"。
+ * @note   先恢复并提交三相 PWM1 模式与使能，再装载占空比、复位计数，最后置 MOE/CEN。
  *         启动后必须调用 bsp_pwm_check_ready() 复核。
  */
 void bsp_pwm_start(void)

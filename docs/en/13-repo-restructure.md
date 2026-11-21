@@ -206,7 +206,7 @@ Split by **call frequency**, not by feature name:
 
 | New file | Content | State | Call direction |
 |---|---|---|---|
-| `pwm_io.c` | `bsp_pwm_arm_tim()`, `bsp_pwm_disarm_tim()`, `bsp_pwm_enable_phase()` | stateless, **no `CTRL_SD`** | leaf |
+| `pwm_io.c` | `bsp_pwm_arm_tim()`, `bsp_pwm_disarm_tim()`, `bsp_pwm_apply_pair()` | stateless, **no `CTRL_SD`** | leaf |
 | `pwm_duty.c` | `bsp_pwm_set_duty()`, `bsp_pwm_set_duty_raw()`, `pwm_write_ccr3()` (inline) | stateless | leaf |
 | `pwm_bridge.c` | `bsp_pwm_enable_bridge()`, `bsp_pwm_enable_bridge_sixstep()`, `bsp_pwm_is_bridge_enabled()`, `bsp_pwm_check_ready()`, **`bsp_pwm_stop_emergency()`** | owns `s_bridge_enabled` shadow | leaf (`emergency_stop` writes registers directly) |
 | `pwm.c` | `bsp_pwm_init()`, `bsp_pwm_start()`, `bsp_pwm_stop()` | stateless | **only cross-file orchestration point** |
@@ -215,7 +215,7 @@ Split by **call frequency**, not by feature name:
 
 **`bsp_pwm_stop_emergency()` must stay in `pwm_bridge.c`**: it clears `s_bridge_enabled`, and only with the shadow state in the same file can "pull `CTRL_SD` low + clear `BDTR`/`CCER`/`CR1` + clear the shadow" stay in one function body. This is a safety requirement, not just performance.
 
-**Hot-path check**: after the split, `bsp_pwm_set_duty()` and `bsp_pwm_enable_phase()` contain **zero cross-file calls**; cross-file calls exist only in `pwm.c` orchestration (cold path).
+**Hot-path check**: after the split, `bsp_pwm_set_duty()` and `bsp_pwm_apply_pair()` contain **zero cross-file calls**; cross-file calls exist only in `pwm.c` orchestration (cold path).
 
 ### 4.4 Splitting `bsp_perf.c` (230 lines): breaking the cycle
 
@@ -356,7 +356,7 @@ Each module needs **at least one of `read`/`write`**; `init` is required except 
 | Module | init | task | read | write | hook |
 |---|---|---|---|---|---|
 | `bsp/board` | — | — | `bsp_board_get_name` `bsp_board_get_millis` `bsp_board_get_pwm_arr` `bsp_board_get_deadtime_dtg` `bsp_board_get_boot_test` `bsp_board_get_drive_allowed` | `bsp_board_delay_ms` | — |
-| `bsp/pwm` | `bsp_pwm_init` | — | `bsp_pwm_check_ready` `bsp_pwm_is_bridge_enabled` | `bsp_pwm_start` `bsp_pwm_stop` `bsp_pwm_set_duty` `bsp_pwm_set_duty_raw` `bsp_pwm_enable_phase` `bsp_pwm_enable_bridge` `bsp_pwm_enable_bridge_sixstep` | `bsp_pwm_stop_emergency` |
+| `bsp/pwm` | `bsp_pwm_init` | — | `bsp_pwm_check_ready` `bsp_pwm_is_bridge_enabled` | `bsp_pwm_start` `bsp_pwm_stop` `bsp_pwm_set_duty` `bsp_pwm_set_duty_raw` `bsp_pwm_apply_pair` `bsp_pwm_enable_bridge` `bsp_pwm_enable_bridge_sixstep` | `bsp_pwm_stop_emergency` |
 | `bsp/hall` | `bsp_hall_init` | — | `bsp_hall_read` `bsp_hall_get_sector_deg` `bsp_hall_get_state_str` | — | — |
 | `bsp/adc_cur` | `bsp_adc_cur_init` | — | `bsp_adc_cur_read` | — | — |
 | `bsp/adc_vbus` | `bsp_adc_vbus_init` | — | `bsp_adc_vbus_read` | — | — |
@@ -562,7 +562,7 @@ The prefix-free includes rely on the `<IncludePath>` additions in 8.1. **No gene
 - [x] `python -X utf8 tests/run_native.py` passes
 - [x] `bash tests/check_structure.sh` returns 0
 - [x] `bsp/` has zero lateral includes, zero `../app/`, zero business identifiers
-- [x] `bsp_pwm_set_duty()` / `bsp_pwm_enable_phase()` contain zero cross-file calls
+- [x] `bsp_pwm_set_duty()` / `bsp_pwm_apply_pair()` contain zero cross-file calls
 - [x] The `bsp_pwm_stop_emergency()` sequence remains in a single function body
 - [x] All modules follow the 6.5 template (banners, section order, header order)
 - [x] `read` sections have no side effects; the only exception, `app_perf_get_snapshot`, is documented

@@ -16,11 +16,19 @@
 #include "perf.h"
 #include "perf_clock.h"
 #include "stm32g4xx_it.h"
+#include "pwm_model.h"
+#include "app_control.h"
+#include "alg_sixstep.h"
 
 /* 可控执行耗时只用于核对统计区间，不代表实板测量。 */
 #define TEST_RX_CYCLES    13u
 #define TEST_TX_CYCLES    29u
 #define TEST_DELAY_CYCLES 37u
+#define TEST_PWM_DUTY       0.20f
+#define TEST_PWM_COMPARE    850u
+#define TEST_PWM_NEXT_DUTY  0.40f
+#define TEST_PWM_NEXT_CCR   1700u
+#define TEST_PWM_COUNT     1234u
 
 GPIO_TypeDef test_gpioc;
 TIM_TypeDef test_tim1;
@@ -42,6 +50,7 @@ static uint32_t s_boot_pwm_ticks;
 static HAL_StatusTypeDef s_calibration, s_start, s_poll, s_stop;
 static HAL_StatusTypeDef s_vbus_calibration, s_vbus_start, s_vbus_poll, s_vbus_stop;
 static uint32_t s_vbus_raw, s_vbus_stop_calls;
+static test_pwm_active_t s_before_com;
 
 /** @brief 初始化测试寄存器及可注入错误。 */
 static void reset_hardware(void)
@@ -77,6 +86,7 @@ static void reset_hardware(void)
     s_verify_boot = 0u;
     s_boot_pwm_ticks = 0u;
     s_measure_cycles = 0u;
+    test_pwm_reset_model();
 }
 
 /** @brief 模拟 CCR 写入；不模拟硬件预装载和死区。 */
@@ -231,7 +241,8 @@ static void test_pwm(void)
             if (high == low) { continue; }
             reset_hardware(); bsp_pwm_init(); bsp_pwm_start();
             assert(bsp_pwm_check_ready() == 1u);
-            bsp_pwm_enable_phase((pwm_phase_t)(3u - high - low), 0u);
+            bsp_pwm_set_duty_raw(0.2f, 0.2f, 0.2f);
+            assert(bsp_pwm_apply_pair((pwm_phase_t)high, (pwm_phase_t)low) == 1u);
             assert(bsp_pwm_check_ready() == 0u && bsp_pwm_enable_bridge(1u) == 0u);
             assert(bsp_pwm_enable_bridge_sixstep((pwm_phase_t)high, (pwm_phase_t)low) == 1u);
             assert(bsp_pwm_is_bridge_enabled() == 1u && test_tim1.EGR == TIM_EGR_UG);
@@ -261,6 +272,156 @@ static void test_pwm(void)
     assert(test_gpioc.BRR == CTRL_SD_Pin && bsp_pwm_is_bridge_enabled() == 0u);
     assert((test_tim1.BDTR & (TIM_BDTR_MOE | TIM_BDTR_AOE)) == 0u);
     assert((test_tim1.CCER & 0x555u) == 0u && (test_tim1.CR1 & TIM_CR1_CEN) == 0u);
+}
+
+/** @brief 各寄存器写入后尝试 UEV，控制位必须保持旧状态直到 COM。 */
+static void probe_control_commit(uint32_t *reg)
+{
+    test_pwm_update();
+    if (reg != &test_tim1.EGR)
+    {
+        assert(test_pwm_active.ccmr1 == s_before_com.ccmr1);
+        assert(test_pwm_active.ccmr2 == s_before_com.ccmr2);
+        assert(test_pwm_active.ccer == s_before_com.ccer);
+    }
+    assert(test_tim1.CNT == TEST_PWM_COUNT);
+    assert(test_pwm_active.ug_count == s_before_com.ug_count);
+}
+
+/** @brief 在三次 CCR 写入后分别注入 UEV，禁止搬入半组占空比。 */
+static void probe_duty_update(uint32_t *reg)
+{
+    (void)reg;
+    test_pwm_update();
+    assert(test_pwm_active.ccr[0] == test_pwm_active.ccr[1]);
+    assert(test_pwm_active.ccr[0] == test_pwm_active.ccr[2]);
+    assert((test_pwm_active.ccr[0] == TEST_PWM_COMPARE) ||
+           (test_pwm_active.ccr[0] == TEST_PWM_NEXT_CCR));
+    assert(test_tim1.CNT == TEST_PWM_COUNT);
+}
+
+/** @brief 按独立六步表检查有效输出，不通过生产查询函数生成期望值。 */
+static void check_active_pair(uint8_t high, uint8_t low)
+{
+    const uint32_t output_pair = TIM_CCER_CC1E | TIM_CCER_CC1NE;
+    const uint32_t mask = (output_pair << ((uint32_t)high * PWM_CCER_CHANNEL_SHIFT)) |
+                          (output_pair << ((uint32_t)low * PWM_CCER_CHANNEL_SHIFT));
+    const uint32_t modes[3] = {
+        test_pwm_active.ccmr1 & TIM_CCMR1_OC1M,
+        (test_pwm_active.ccmr1 & TIM_CCMR1_OC2M) >> PWM_CCMR_CHANNEL_SHIFT,
+        test_pwm_active.ccmr2 & TIM_CCMR2_OC3M
+    };
+    assert((test_pwm_active.ccer & PWM_CCER_ALL) == mask);
+    for (uint32_t i = 0u; i < PWM_PHASE_COUNT; i++)
+    {
+        assert(modes[i] == ((i == high) ? TIM_OCMODE_PWM1 : TIM_OCMODE_FORCED_INACTIVE));
+    }
+}
+
+/** @brief 全部正反向转换一次 COM 提交；载波连续，低相不靠 CCR=0 实现。 */
+static void test_pwm_commutation(void)
+{
+    const uint8_t expected[6][2] = {{0u,1u}, {0u,2u}, {1u,2u}, {1u,0u}, {2u,0u}, {2u,1u}};
+    uint8_t step = 0u;
+    uint32_t before;
+    reset_hardware(); bsp_pwm_init(); app_control_init();
+    assert(app_control_start() == 1u);
+    check_active_pair(0u, 1u);
+    assert(test_pwm_active.ccr[0] == TEST_PWM_COMPARE);
+    assert(test_pwm_active.ccr[1] == TEST_PWM_COMPARE && test_pwm_active.ccr[2] == TEST_PWM_COMPARE);
+    test_tim1.CNT = TEST_PWM_COUNT;
+    for (uint8_t forward = 0u; forward < 2u; forward++)
+    {
+        for (uint32_t i = 0u; i < ALG_SIXSTEP_COUNT; i++)
+        {
+            step = alg_sixstep_next_step(step, forward);
+            s_before_com = test_pwm_active;
+            test_pwm_after_write = probe_control_commit;
+            assert(alg_sixstep_apply(step, TEST_PWM_DUTY) == 1u);
+            test_pwm_after_write = NULL;
+            assert(test_pwm_active.com_count == s_before_com.com_count + 1u);
+            check_active_pair(expected[step][0], expected[step][1]);
+            assert(test_pwm_active.ccr[expected[step][0]] == TEST_PWM_COMPARE);
+        }
+    }
+
+    // 占空比尚未更新时换相仍使用旧的可用值；COM 不得偷偷提交 CCR 或重置 CNT。
+    bsp_pwm_set_duty_raw(TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY);
+    before = test_pwm_active.update_count;
+    assert(bsp_pwm_apply_pair(PHASE_V, PHASE_W) == 1u);
+    assert(test_pwm_active.update_count == before);
+    assert(test_pwm_active.ccr[1] == TEST_PWM_COMPARE && test_tim1.CNT == TEST_PWM_COUNT);
+    test_pwm_update();
+    assert(test_pwm_active.ccr[0] == TEST_PWM_NEXT_CCR);
+    assert(test_pwm_active.ccr[1] == TEST_PWM_NEXT_CCR && test_pwm_active.ccr[2] == TEST_PWM_NEXT_CCR);
+
+    bsp_pwm_set_duty_raw(TEST_PWM_DUTY, TEST_PWM_DUTY, TEST_PWM_DUTY);
+    test_pwm_update();
+    test_pwm_after_write = probe_duty_update;
+    bsp_pwm_set_duty_raw(TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY);
+    test_pwm_after_write = NULL;
+    assert(test_pwm_active.blocked_updates >= 3u);
+    assert((test_tim1.CR1 & TIM_CR1_UDIS) == 0u);
+    assert(test_pwm_active.ccr[0] == TEST_PWM_NEXT_CCR);
+    test_tim1.CR1 |= TIM_CR1_UDIS;
+    bsp_pwm_set_duty_raw(TEST_PWM_DUTY, TEST_PWM_DUTY, TEST_PWM_DUTY);
+    assert((test_tim1.CR1 & TIM_CR1_UDIS) != 0u);
+    test_tim1.CR1 &= ~TIM_CR1_UDIS;
+    test_pwm_update();
+
+    bsp_pwm_stop();
+    assert((test_pwm_active.ccer & PWM_CCER_ALL) == 0u);
+    bsp_pwm_start();
+    assert(bsp_pwm_check_ready() == 1u);
+    assert((test_pwm_active.ccmr1 & TIM_CCMR1_OC1M) == TIM_OCMODE_PWM1);
+    assert((test_pwm_active.ccmr1 & TIM_CCMR1_OC2M) == (TIM_OCMODE_PWM1 << PWM_CCMR_CHANNEL_SHIFT));
+    assert((test_pwm_active.ccmr2 & TIM_CCMR2_OC3M) == TIM_OCMODE_PWM1);
+
+    // 模拟已准备但尚未 COM 的输出，在紧急关断后再触发 COM 也不能恢复使能。
+    MODIFY_REG(test_tim1.CCER, PWM_CCER_ALL, TIM_CCER_CC1E | TIM_CCER_CC1NE);
+    bsp_pwm_stop_emergency();
+    WRITE_REG(test_tim1.EGR, TIM_EGR_COMG);
+    assert((test_pwm_active.ccer & PWM_CCER_ALL) == 0u);
+    assert((test_tim1.BDTR & (TIM_BDTR_MOE | TIM_BDTR_AOE)) == 0u);
+    assert(test_gpioc.BRR == CTRL_SD_Pin && bsp_pwm_is_bridge_enabled() == 0u);
+}
+
+/** @brief 模式、预装载、外部 COM 和占空比不匹配时必须拒绝开桥。 */
+static void test_pwm_com_interlocks(void)
+{
+    reset_hardware(); bsp_pwm_init(); app_control_init();
+    bsp_pwm_set_duty_raw(TEST_PWM_DUTY, TEST_PWM_DUTY, TEST_PWM_DUTY);
+    bsp_pwm_start();
+    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_V) == 1u);
+    test_tim1.CCMR1 = (test_tim1.CCMR1 & ~TIM_CCMR1_OC2M) |
+                     (TIM_OCMODE_PWM1 << PWM_CCMR_CHANNEL_SHIFT);
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
+    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_V) == 1u);
+    test_tim1.CCR3 = 0u;
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
+    test_tim1.CCR3 = TEST_PWM_COMPARE;
+    test_tim1.CR2 |= TIM_CR2_CCUS;
+    assert(bsp_pwm_apply_pair(PHASE_V, PHASE_W) == 0u);
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
+    test_tim1.CR2 &= ~TIM_CR2_CCUS;
+    test_tim1.CR2 |= TIM_CR2_OIS1;
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
+    test_tim1.CR2 &= ~TIM_CR2_OIS1;
+    test_tim1.CR1 |= TIM_CR1_UDIS;
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
+    test_tim1.CR1 &= ~TIM_CR1_UDIS;
+    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_U) == 0u);
+    assert(bsp_pwm_apply_pair((pwm_phase_t)99, PHASE_V) == 0u);
+    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 1u);
+
+    app_set_mode_raw(APP_MODE_SIXSTEP_FWD);
+    test_tim1.CR2 &= ~TIM_CR2_CCPC;
+    s_tick += 1000u;
+    app_control_task();
+    assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
+    assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u && (test_tim1.BDTR & TIM_BDTR_MOE) == 0u);
+    alg_sixstep_init(NULL);
+    assert(alg_sixstep_apply(0u, TEST_PWM_DUTY) == 0u);
 }
 
 /** @brief 验证霍尔正反向步进及回绕，不推定真实电角度零点。 */
@@ -388,7 +549,8 @@ static void test_monitor_only(void)
     bsp_pwm_start();
     assert(bsp_pwm_check_ready() == 1u);
     assert(bsp_pwm_enable_bridge(1u) == 0u);
-    bsp_pwm_enable_phase(PHASE_W, 0u);
+    bsp_pwm_set_duty_raw(0.2f, 0.2f, 0.2f);
+    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_V) == 1u);
     assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
     assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
 }
@@ -464,6 +626,7 @@ int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
     test_task_accounting(); test_irq_accounting();
+    test_pwm_commutation(); test_pwm_com_interlocks();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }

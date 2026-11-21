@@ -49,6 +49,7 @@ Edit generated code only inside USER CODE regions. Change peripheral configurati
 | MCU | STM32G474RET6, LQFP64, Cortex-M4F, 512 KB Flash, 128 KB SRAM |
 | Clock | HSI 16 MHz / 4 × 85 / 2 = 170 MHz |
 | PWM | Center-aligned 20 kHz; PSC=0, ARR=4250, RCR=1 |
+| Six-step output | Equal phase CCR duties; PWM1 / forced inactive / disabled outputs committed together by COM; bridge remains locked |
 | Dead time | DTG=149, clock divider 1, 1 µs |
 | Phase current | ADC1/2/3 independent regular groups, sequential software triggers; not synchronized |
 | VBUS | ADC4_IN3, PB12; `raw × 3.3 × 25 / 4096`; monitoring only |

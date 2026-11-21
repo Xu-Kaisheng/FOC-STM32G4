@@ -45,6 +45,7 @@ def main():
     # 运行时回归：除 board.c 外的全部实际模块；板级参数由测试自带桩替代。
     files = [
         "tests/test_runtime.c",
+        "tests/pwm_model.c",
         "Core/Src/stm32g4xx_it.c",
         "src/bsp/adc_cur/adc_cur.c",
         "src/bsp/adc_vbus/adc_vbus.c",

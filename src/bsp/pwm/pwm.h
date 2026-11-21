@@ -28,6 +28,9 @@
 #define PWM_CCER_ALL      (TIM_CCER_CC1E | TIM_CCER_CC1NE | \
                            TIM_CCER_CC2E | TIM_CCER_CC2NE | \
                            TIM_CCER_CC3E | TIM_CCER_CC3NE)
+#define PWM_PHASE_COUNT          3u
+#define PWM_CCMR_CHANNEL_SHIFT   8u
+#define PWM_CCER_CHANNEL_SHIFT   4u
 
 /* ---------------- 公共类型 ---------------- */
 
@@ -78,24 +81,26 @@ void bsp_pwm_stop(void);
  * @param  du: U 相占空比 0.0~1.0（= 上管导通比例）
  * @param  dv: V 相占空比
  * @param  dw: W 相占空比
- * @note   内部会钳位到 [PWM_DUTY_MIN, PWM_DUTY_MAX]
+ * @note   内部会钳位到 [PWM_DUTY_MIN, PWM_DUTY_MAX]；仅由主循环单一调用方写入。
  */
 void bsp_pwm_set_duty(float du, float dv, float dw);
 
 /**
  * @brief  设置三相占空比（不做 5% 下限钳位）
  * @param  du/dv/dw: 0.0~1.0
- * @note   六步换相专用：非导通相需要真正的 0%，让下管持续导通
+ * @note   允许初始化时清零；两相驱动时三相必须写同一非零占空比，低相由输出模式控制。
+ *         仅由主循环单一调用方写入，三路通过 UDIS 成组预装载，下一次 UEV 生效。
  */
 void bsp_pwm_set_duty_raw(float du, float dv, float dw);
 
 /**
- * @brief  单独使能/关闭某一相的互补输出
- * @param  phase: PHASE_U / PHASE_V / PHASE_W
- * @param  enable: true 输出，false 该相上下管全关（浮空）
- * @note   六步换相时用它把不参与导通的相"悬空"
+ * @brief  一次提交斩波相、低侧常通相与悬空相
+ * @param  high/low: 两个不同的 PHASE_U / PHASE_V / PHASE_W
+ * @retval 1 已产生 COM；0 参数或定时器状态无效，调用方必须关桥停机
+ * @note   三相 CCR 须提前装入有效占空比；本接口不提交 CCR、不重置 CNT。
+ *         仅主循环调用，禁止与其他输出配置写入者并发。
  */
-void bsp_pwm_enable_phase(pwm_phase_t phase, uint8_t enable);
+uint8_t bsp_pwm_apply_pair(pwm_phase_t high, pwm_phase_t low);
 
 /**
  * @brief  控制驱动板 H 桥总开关

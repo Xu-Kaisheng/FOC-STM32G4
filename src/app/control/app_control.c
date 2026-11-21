@@ -30,10 +30,10 @@ static uint32_t s_last_step_ms = 0u;
 
 /* ---------------- internal ---------------- */
 
-/** @brief 把算法的"单相开关"回调接到 BSP。 */
-static void control_enable_phase(uint8_t phase, uint8_t enable)
+/** @brief 把算法的高低相组合交给 BSP，通过 COM 一次提交。 */
+static uint8_t control_apply_pair(uint8_t high, uint8_t low)
 {
-    bsp_pwm_enable_phase((pwm_phase_t)phase, enable);
+    return bsp_pwm_apply_pair((pwm_phase_t)high, (pwm_phase_t)low);
 }
 
 /** @brief 把算法的"三相占空比"回调接到 BSP。 */
@@ -44,7 +44,7 @@ static void control_set_duty_raw(float du, float dv, float dw)
 
 static const alg_sixstep_io_t s_algo_io =
 {
-    control_enable_phase,
+    control_apply_pair,
     control_set_duty_raw
 };
 
@@ -73,6 +73,7 @@ void app_control_task(void)
     uint32_t now;
     uint32_t step_ms;
     uint32_t perf_start;
+    uint8_t applied;
 
     if ((mode != APP_MODE_SIXSTEP_FWD) && (mode != APP_MODE_SIXSTEP_REV))
     {
@@ -93,7 +94,13 @@ void app_control_task(void)
 
     perf_start = app_perf_begin_control();
     s_step = alg_sixstep_next_step(s_step, (mode == APP_MODE_SIXSTEP_FWD) ? 1u : 0u);
-    alg_sixstep_apply(s_step, s_duty);
+    applied = alg_sixstep_apply(s_step, s_duty);
+    if (applied == 0u)
+    {
+        // 输出配置失效时不能保持旧步继续运行，先关桥停 PWM 再退回停机态。
+        bsp_pwm_stop();
+        app_set_mode_raw(APP_MODE_STOP);
+    }
     app_perf_end_control(APP_PERF_SIXSTEP, perf_start);
 }
 
@@ -141,9 +148,9 @@ uint8_t app_control_start(void)
     s_step = 0u;
     s_last_step_ms = bsp_board_get_millis();
 
-    // 先把占空比清零并启动计数器/输出（bsp_pwm_start 会把三路都打开），
-    // 再由 alg_sixstep_apply 把不参与的相单独关掉——顺序不能反。
-    bsp_pwm_set_duty_raw(0.0f, 0.0f, 0.0f);
+    // 关桥时先为三相装入同一占空比并启动（bsp_pwm_start 会把三路都打开），
+    // 再由 alg_sixstep_apply 提交高低相模式和悬空相——开桥前必须完成两步。
+    bsp_pwm_set_duty_raw(s_duty, s_duty, s_duty);
     bsp_pwm_start();
 
     // 安全联锁：六路输出/死区没验证通过，绝不允许把 CTRL_SD 拉高。
@@ -153,7 +160,11 @@ uint8_t app_control_start(void)
         return 0u;
     }
 
-    alg_sixstep_apply(s_step, s_duty);
+    if (alg_sixstep_apply(s_step, s_duty) == 0u)
+    {
+        bsp_pwm_stop();
+        return 0u;
+    }
     app_control_get_phases(&hi, &lo);
     if (bsp_pwm_enable_bridge_sixstep((pwm_phase_t)hi, (pwm_phase_t)lo) == 0u)
     {

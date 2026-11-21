@@ -210,16 +210,16 @@ src/
 
 | 新文件 | 内容 | 状态 | 调用方向 |
 |---|---|---|---|
-| `pwm_io.c` | `bsp_pwm_arm_tim()`、`bsp_pwm_disarm_tim()`、`bsp_pwm_enable_phase()` | 无状态，**不碰 `CTRL_SD`** | 叶子 |
+| `pwm_io.c` | `bsp_pwm_arm_tim()`、`bsp_pwm_disarm_tim()`、`bsp_pwm_apply_pair()` | 无状态，**不碰 `CTRL_SD`** | 叶子 |
 | `pwm_duty.c` | `bsp_pwm_set_duty()`、`bsp_pwm_set_duty_raw()`、`pwm_write_ccr3()`（inline） | 无状态 | 叶子 |
 | `pwm_bridge.c` | `bsp_pwm_enable_bridge()`、`bsp_pwm_enable_bridge_sixstep()`、`bsp_pwm_is_bridge_enabled()`、`bsp_pwm_check_ready()`、**`bsp_pwm_stop_emergency()`** | 持有 `s_bridge_enabled` 影子态 | 叶子（`emergency_stop` 直写寄存器，不经 io 层） |
 | `pwm.c` | `bsp_pwm_init()`、`bsp_pwm_start()`、`bsp_pwm_stop()` | 无状态 | **唯一跨文件编排点**：调 `pwm_io` 与 `pwm_bridge` |
 
-`pwm_io.c` 只提供不含 `CTRL_SD` 操作的纯 TIM1 时序原语（`arm`/`disarm`/`phase_enable`）。原 `bsp_pwm_start()`/`bsp_pwm_stop()` 中"停输出 + 关桥"的组合动作上移到 `pwm.c` 编排层，因为 `pwm_io` 若直接调用 `pwm_bridge`，就成了 BSP 横向调用，违反 2.3。
+`pwm_io.c` 只提供不含 `CTRL_SD` 操作的纯 TIM1 时序原语（`arm`/`disarm`/`apply_pair`）。原 `bsp_pwm_start()`/`bsp_pwm_stop()` 中"停输出 + 关桥"的组合动作上移到 `pwm.c` 编排层，因为 `pwm_io` 若直接调用 `pwm_bridge`，就成了 BSP 横向调用，违反 2.3。
 
 **`bsp_pwm_stop_emergency()` 必须放在 `pwm_bridge.c`**，不能放 `pwm_io.c`：它最后要写 `s_bridge_enabled = 0u`，与该影子态同文件才能保证"拉低 `CTRL_SD` + 清 `BDTR`/`CCER`/`CR1` + 清影子态"三步不被拆散。这既是性能要求，更是安全要求。
 
-**热路径验证**：拆分后 `bsp_pwm_set_duty()` 与 `bsp_pwm_enable_phase()` 内部只调用同文件 `static` 函数和 `static inline`，**零跨文件调用**。跨文件调用只出现在 `pwm.c` 的编排函数中（`bsp_pwm_start`/`bsp_pwm_stop`/`bsp_pwm_init`），这些都只在初始化与停机时执行，属冷路径。
+**热路径验证**：拆分后 `bsp_pwm_set_duty()` 与 `bsp_pwm_apply_pair()` 内部只调用同文件 `static` 函数和 `static inline`，**零跨文件调用**。跨文件调用只出现在 `pwm.c` 的编排函数中（`bsp_pwm_start`/`bsp_pwm_stop`/`bsp_pwm_init`），这些都只在初始化与停机时执行，属冷路径。
 
 ### 4.4 `bsp_perf.c`（230 行）的拆法：破环
 
@@ -367,7 +367,7 @@ void       app_set_duty(float duty);
 | 模块 | init | task | read | write | hook |
 |---|---|---|---|---|---|
 | `bsp/board` | — | — | `bsp_board_get_name` `bsp_board_get_millis` `bsp_board_get_pwm_arr` `bsp_board_get_deadtime_dtg` `bsp_board_get_boot_test` `bsp_board_get_drive_allowed` | `bsp_board_delay_ms` | — |
-| `bsp/pwm` | `bsp_pwm_init` | — | `bsp_pwm_check_ready` `bsp_pwm_is_bridge_enabled` | `bsp_pwm_start` `bsp_pwm_stop` `bsp_pwm_set_duty` `bsp_pwm_set_duty_raw` `bsp_pwm_enable_phase` `bsp_pwm_enable_bridge` `bsp_pwm_enable_bridge_sixstep` | `bsp_pwm_stop_emergency` |
+| `bsp/pwm` | `bsp_pwm_init` | — | `bsp_pwm_check_ready` `bsp_pwm_is_bridge_enabled` | `bsp_pwm_start` `bsp_pwm_stop` `bsp_pwm_set_duty` `bsp_pwm_set_duty_raw` `bsp_pwm_apply_pair` `bsp_pwm_enable_bridge` `bsp_pwm_enable_bridge_sixstep` | `bsp_pwm_stop_emergency` |
 | `bsp/hall` | `bsp_hall_init` | — | `bsp_hall_read` `bsp_hall_get_sector_deg` `bsp_hall_get_state_str` | — | — |
 | `bsp/adc_cur` | `bsp_adc_cur_init` | — | `bsp_adc_cur_read` | — | — |
 | `bsp/adc_vbus` | `bsp_adc_vbus_init` | — | `bsp_adc_vbus_read` | — | — |
@@ -575,7 +575,7 @@ void       app_set_duty(float duty);
 - [x] `python -X utf8 tests/run_native.py` 全部通过
 - [x] `bash tests/check_structure.sh` 返回 0
 - [x] `bsp/` 内零横向 include、零反向 `../app/`、零业务标识符
-- [x] `bsp_pwm_set_duty()` / `bsp_pwm_enable_phase()` 内跨文件调用为 0
+- [x] `bsp_pwm_set_duty()` / `bsp_pwm_apply_pair()` 内跨文件调用为 0
 - [x] `bsp_pwm_stop_emergency()` 关桥序列仍在单一函数体内
 - [x] 全部模块符合 6.5 结构模板：分节横幅齐全、`init → task → read → write → hook` 顺序正确、`.h` 声明顺序与 `.c` 一致
 - [x] `read` 节函数经抽查确认无副作用；唯一例外 `app_perf_get_snapshot` 的 read-and-clear 已在注释中声明

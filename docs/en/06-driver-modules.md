@@ -12,8 +12,8 @@ CubeMX initialization precedes `app_init()`. Core application/shutdown hooks sta
 | `bsp_pwm_start()` | While bridge is off, reset count/load preloads, then enable six outputs, MOE, counter |
 | `bsp_pwm_check_ready()` | Three-phase self-check; all six outputs enabled in pairs |
 | `bsp_pwm_set_duty(du,dv,dw)` | FOC interface; clamp 5%–92% |
-| `bsp_pwm_set_duty_raw(du,dv,dw)` | Six-step interface; allow 0% for low phase, maximum 92% |
-| `bsp_pwm_enable_phase(phase,en)` | Change that phase's CCxE/CCxNE only; do not stop counter |
+| `bsp_pwm_set_duty_raw(du,dv,dw)` | Allow initialization to zero, maximum 92%; running six-step maintains equal nonzero duties on all phases |
+| `bsp_pwm_apply_pair(high,low)` | Prepare all phase modes/enables and commit with one COM; 1 success / 0 rejection, caller must stop on failure |
 | `bsp_pwm_enable_bridge(en)` | Three-phase enable or unconditional disable; 1 success / 0 rejection |
 | `bsp_pwm_enable_bridge_sixstep(high,low)` | Require exact selected two phase pairs and third phase floating; rejection leaves bridge off |
 | `bsp_pwm_is_bridge_enabled()` | Software shadow; does not prove hardware overcurrent latch reset |
@@ -22,15 +22,29 @@ CubeMX initialization precedes `app_init()`. Core application/shutdown hooks sta
 
 ### Startup and interlocks
 
-G474 refuses bridge enable. The retained path is bridge off → stop PWM → wait 200 ms → clear duty → start → three-phase check → `app_apply_step` → six-step enable check. Rejection returns STOP.
+G474 refuses bridge enable. The retained path is bridge off → stop PWM → wait 200 ms → prepare equal phase duties → start → three-phase check → `alg_sixstep_apply` → six-step enable check. With MOE off, startup enables CCPC, disables external COM triggering and restores all phases to PWM1; mode/duty commits precede MOE/CEN enable. Rejection returns STOP.
 
-Both checks validate MOE/CEN, ARR=4250, PSC=0, RCR=1, center-aligned mode 1, divider 1, DTG=149, OSSI/OSSR, PWM1, CCR preload, and active-high polarity. The three-phase mask must be `0x555`; the six-step mask must match the specific selected phases.
+Both checks validate MOE/CEN, ARR=4250, PSC=0, RCR=1, center-aligned mode 1, divider 1, DTG=149, OSSI/OSSR, CCR preload and active-high polarity, plus CCPC=1, CCUS=0, UDIS=0 and low idle levels on all phases. The three-phase check requires PWM1 and mask `0x555`; six-step requires the selected pair mask, PWM1 on the high phase, forced inactive on the others, and equal nonzero CCR values.
 
-An update event commits CCR preload before bridge enable, preventing stale duty. Hardware-triggered ADC work must recheck this event's sampling effects. CCxE/CCxNE permit complementary outputs, not simultaneous conduction. HAL main and complementary starts are separate; this driver explicitly manages all six. Floating a phase must not invoke a HAL stop that also changes MOE/counter.
+COM and update events commit mode, enable and CCR preloads before bridge enable. Running commutation generates only COM, without UG or counter reset. Hardware-triggered ADC work must recheck sampling effects. CCxE/CCxNE permit complementary outputs, not simultaneous conduction. HAL main and complementary starts are separate; this driver explicitly manages all six.
+
+### COM output combinations and calling contract
+
+| Role | OCxM | CCxE / CCxNE | Output |
+|---|---|---|---|
+| High phase | PWM1 | 1 / 1 | High-side PWM, complementary low side, hardware dead time |
+| Low phase | Forced inactive | 1 / 1 | Inactive OCREF: high side off, low side on |
+| Floating phase | Forced inactive | 0 / 0 | Both outputs disabled |
+
+The algorithm submits one combination through the application-injected `apply_pair` callback. Failure stops power/PWM and returns STOP. All CCRs maintain usable duty values in advance. Duty changes take effect at the next permitted UEV; COM commits only modes/enables. Commutation before that UEV uses the previous complete duty set. COM is not automatically aligned to the carrier boundary; output edges also depend on CNT and dead time.
+
+Only one main-loop caller may write outputs; concurrent ISR configuration is unsupported. CCR conversion precedes a short UDIS-protected group write that restores the previous UDIS state. The counter keeps running, but a coincident update event is suppressed, potentially delaying update/TRGO. Synchronous ADC or current-loop integration must redesign the update window.
+
+Hardware validation must keep CTRL_SD=0 while observing all six outputs: exercise all forward/reverse steps, constant low-side output, floating phase, duty changes, restart and fault shutdown. Check complementary dead time around COM and carrier continuity. The host model validates UEV/COM register commits only, not electrical waveforms or the power stage.
 
 ### Fault shutdown
 
-NMI, HardFault, MemManage, BusFault, UsageFault, and `Error_Handler` stop power before halting. Clearing AOE prevents later update events from restoring MOE. Reset is required. Software shutdown cannot act after the CPU completely loses execution ability.
+NMI, HardFault, MemManage, BusFault, UsageFault, and `Error_Handler` lower SD, clear MOE/AOE, clear all enables and commit COM, then stop the counter before halting; shutdown never waits for a natural update. Clearing AOE prevents later update events from restoring MOE. Normal stop also clears pending enables. Reset is required after fatal faults. Software shutdown cannot act after the CPU completely loses execution ability.
 
 ## 2. Phase current: bsp/adc_cur
 
@@ -90,13 +104,13 @@ The application layer is split by responsibility: `app/app` (init, mode interloc
 | Module | Responsibility |
 |---|---|
 | `algorithm/sixstep` | Step table, next-step calculation, apply one step. **Pure algorithm**: standard C only; hardware output goes through injected `alg_sixstep_io_t` callbacks |
-| `app/control` | Six-step parameters (step, duty, electrical frequency) and bench limits; injects the BSP `bsp_pwm_enable_phase/set_duty_raw` callbacks; `app_control_task()` advances at the step interval |
+| `app/control` | Six-step parameters (step, duty, electrical frequency) and bench limits; injects the BSP `bsp_pwm_apply_pair/set_duty_raw` callbacks; `app_control_task()` advances at the step interval |
 
 ```text
 app_task → app_control_task → alg_sixstep_next_step / alg_sixstep_apply
                                       │ callbacks
                                       ▼
-                              bsp_pwm_enable_phase / bsp_pwm_set_duty_raw
+                              bsp_pwm_apply_pair / bsp_pwm_set_duty_raw
 ```
 
 The algorithm layer includes no BSP/application header, so it can be host-tested without hardware and the same callback mechanism can serve FOC later. The bridge interlock still calls `bsp_pwm_enable_bridge_sixstep()` from `app/control`.
