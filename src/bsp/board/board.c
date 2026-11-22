@@ -1,5 +1,5 @@
 /** @file    board.c
- *  @brief   G474RET6 DevEBox 诊断板的板级参数，接线未核验时不驱动功率级
+ *  @brief   G474RET6 DevEBox 板级参数，允许命令启动，上电保持关桥
  */
 #include "board.h"
 #include "main.h"
@@ -11,10 +11,10 @@
 
 /* ---------------- read ---------------- */
 
-/** @brief 明确显示当前是受限诊断目标。 */
+/** @brief 显示板卡名称；是否运行由应用模式决定。 */
 const char *bsp_board_get_name(void)
 {
-    return "G474RET6 DevEBox / MONITOR ONLY";
+    return "G474RET6 DevEBox";
 }
 
 /** @brief 使用 HAL 毫秒时基。 */
@@ -41,10 +41,10 @@ uint8_t bsp_board_get_boot_test(void)
     return 0u;
 }
 
-/** @brief 照片只能确认引出，不能证明无板载负载；默认拒绝开桥。 */
+/** @brief 按维护者许可开放手动启动，开桥仍须通过 ADC 与 PWM 联锁。 */
 uint8_t bsp_board_get_drive_allowed(void)
 {
-    return 0u;
+    return 1u;
 }
 
 /* ---------------- write ---------------- */

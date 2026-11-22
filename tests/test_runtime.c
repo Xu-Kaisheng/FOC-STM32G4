@@ -50,6 +50,7 @@ static uint8_t s_measure_cycles;
 static uint32_t s_tick;
 static uint8_t s_rx;
 static uint8_t s_board_allow = 1u;
+static uint8_t s_boot_test = 1u;
 static uint8_t s_verify_boot;
 static uint32_t s_boot_pwm_ticks;
 static HAL_StatusTypeDef s_calibration, s_start, s_poll, s_stop;
@@ -90,6 +91,7 @@ static void reset_hardware(void)
     s_tick = 0u;
     s_rx = 0u;
     s_board_allow = 1u;
+    s_boot_test = 1u;
     s_verify_boot = 0u;
     s_boot_pwm_ticks = 0u;
     s_measure_cycles = 0u;
@@ -174,8 +176,8 @@ void bsp_board_delay_ms(uint32_t ms) { HAL_Delay(ms); }
 uint32_t bsp_board_get_pwm_arr(void) { return 4250u; }
 /** @brief 使用 G474 硬件死区参数。 */
 uint32_t bsp_board_get_deadtime_dtg(void) { return 149u; }
-/** @brief 诊断板禁用上电自检，测试驱动许可开启时覆盖原有自检路径。 */
-uint8_t bsp_board_get_boot_test(void) { return s_board_allow; }
+/** @brief 独立控制上电自检，覆盖手动驱动许可与自动输出分离的策略。 */
+uint8_t bsp_board_get_boot_test(void) { return s_boot_test; }
 /** @brief 模拟 G474 未核验接线的开桥禁用状态。 */
 uint8_t bsp_board_get_drive_allowed(void) { return s_board_allow; }
 
@@ -525,7 +527,12 @@ static void test_log_dma_error(void)
 /** @brief 验证实际应用启动、反转、停机及 ADC 故障锁存。 */
 static void test_application(void)
 {
-    reset_hardware(); app_init();
+    reset_hardware(); s_boot_test = 0u; s_verify_boot = 1u;
+    app_set_mode_raw(APP_MODE_STOP); app_init();
+    s_verify_boot = 0u;
+    assert(s_boot_pwm_ticks == 0u && app_get_mode() == APP_MODE_STOP);
+    assert((test_tim1.BDTR & TIM_BDTR_MOE) == 0u && test_tim1.CCER == 0u);
+    assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u && (test_gpioc.ODR & CTRL_SD_Pin) == 0u);
     assert(bsp_pwm_is_bridge_enabled() == 0u);
     s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
     s_rx = '2'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
@@ -552,7 +559,7 @@ static void test_application(void)
 /** @brief 未核验板卡的应用命令与驱动接口均不能输出功率。 */
 static void test_monitor_only(void)
 {
-    reset_hardware(); s_board_allow = 0u; s_verify_boot = 1u; app_init();
+    reset_hardware(); s_board_allow = 0u; s_boot_test = 0u; s_verify_boot = 1u; app_init();
     s_verify_boot = 0u;
     assert(s_boot_pwm_ticks == 0u);
     assert((test_tim1.BDTR & TIM_BDTR_MOE) == 0u && test_tim1.CCER == 0u);

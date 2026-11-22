@@ -118,9 +118,9 @@ int32_t main(void)
     }
     s_failure = 1u;
     assert(bsp_adc_vbus_init() == 0u && bsp_adc_vbus_read(&bus) == 0u);
-    assert(bsp_board_get_drive_allowed() == 0u && bsp_board_get_boot_test() == 0u);
+    assert(bsp_board_get_drive_allowed() == 1u && bsp_board_get_boot_test() == 0u);
     assert(bsp_board_get_pwm_arr() == 4250u && bsp_board_get_deadtime_dtg() == 149u);
     assert(bsp_board_get_millis() == 123u);
-    puts("PASS: G474 ADC1/2/3 complete diagnostics, ADC4 VBUS, monitor-only board policy");
+    puts("PASS: G474 ADC1/2/3 complete diagnostics, ADC4 VBUS, manual drive without boot test");
     return 0;
 }
