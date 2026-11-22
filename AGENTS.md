@@ -7,49 +7,22 @@
 
 ## 1. 项目上下文
 
-| 项 | 值 |
-|---|---|
-| 目标 | 霍尔 FOC：开环六步 → 电流环 → 速度环，裸机实现，不引入 MCSDK |
-| MCU | STM32G474RET6（LQFP64，DevEBox STM32G474R Ver.20），HSI+PLL 170 MHz；目前仅关桥诊断，板载占用已按原理图核验，J3 须空置 |
-| 驱动板 | 正点原子 ATK-PD6010B（12~60 V / 10 A，6 路光耦 PWM 输入，下管 20 mΩ 采样） |
-| 电机 | BL57H95：24 V，4 极（**2 对极**），3000 rpm，6.6 A，0.33 N·m，霍尔 120° |
-| 控制周期 | 20 kHz（50 µs = 8500 周期 @170 MHz），中心对齐 |
-| 语言 | 注释、文档、提交说明一律**中文** |
+STM32G474RET6 / DevEBox Ver.20 + ATK-PD6010B + BL57H95，裸机霍尔 FOC 工程，不引入 MCSDK。
+本文件只规定开发约束，不复制当前固件状态、引脚表、参数表或测试记录。
 
----
+## 2. 文档归属与修改范围
 
-## 2. 引脚权威表（改动需同步 README 与 docs/zh-CN/01-hardware-and-wiring.md）
+[文档目录](docs/README.md) 定义每个主题的唯一维护入口。修改前先定位主题，通常只更新对应中英文两份。
 
-| CN3 | 信号 | G474 引脚 | 功能 |
-|---:|---|---|---|
-| 2 / 4 / 6 | HALL U / V / W | PC6 / PC7 / PC8 | 上拉 GPIO，当前主循环轮询 |
-| 8 | VBUS | PB12 | ADC4_IN3，×25 |
-| 10 / 12 / 14 | AMP_IU / IV / IW | PC0 / PC1 / PB1 | ADC1_IN6 / ADC2_IN7 / ADC3_IN1 |
-| 17 / 18 | PWM_UH / UL | PA8 / PB13 | TIM1_CH1 / CH1N |
-| 19 / 20 | PWM_VH / VL | PA9 / PB14 | TIM1_CH2 / CH2N |
-| 21 / 22 | PWM_WH / WL | PA10 / PB15 | TIM1_CH3 / CH3N |
-| 24 | CTRL_SD | PC9 | 高有效，初始化低；当前禁止拉高 |
-| 7 / 16 | GND | GND | 两根均共地 |
-| 15 | VTEMP | 未配置 | 暂不接 |
-| 23 | 5V_IN | **禁止连接** | 避免反灌 |
-| — | 调试 TX / RX | PB10 / PB11 | USART3，115200 8N1，3.3 V 逻辑 |
-
-所选引脚已按开发板原理图与 DS12288 Rev 6 核验。**OLED/TFT J3 必须空置**，它并联 PB12～PB15、PC6/PC7。Flash 占 PA15/PC10/PC11/PC12，LED 占 PC13/PD2，按键占 PA0/PA1，均与本方案不冲突。USB PA11/PA12、SWD PA13/PA14、晶振 PF0/PF1 与 PC14/PC15 保留。
-
-### G474RET6 配置（已核验原理图；PWM 死区已有用户实测反馈）
-
-| 功能 | 引脚 / 配置 |
-|---|---|
-| TIM1 上管 / 下管 | PA8/PA9/PA10；PB13/PB14/PB15 |
-| CTRL_SD | PC9，初始化低；当前板级策略禁止拉高 |
-| 霍尔 U/V/W | PC6/PC7/PC8，上拉输入 |
-| 电流 U/V/W | PC0 ADC1_IN6；PC1 ADC2_IN7；PB1 ADC3_IN1 |
-| VBUS | PB12 ADC4_IN3，×25，每 500 ms 监视 |
-| 调试串口 | PB10/PB11，USART3，115200 8N1；TX 走 DMA1_Channel2（DMAMUX USART3_TX），USART3/DMA 中断优先级 15 |
-| 时钟 / PWM | HSI+PLL 170 MHz，TIM1 PSC=0、ARR=4250、RCR=1、中心对齐，20 kHz |
-| 死区 / ADC | DTG=149，1 µs；ADC 内核 42.5 MHz，12 位、247.5 周期，轮询超时参数 1 ms |
-
-2026-11-16 已核对开发板原理图及 DS12288 Rev 6，现有引脚可保留。PB12～PB15、PC6/PC7 与 OLED/TFT J3 并联，J3 必须空置。Flash 占 PA15/PC10/PC11/PC12，LED 占 PC13/PD2，按键占 PA0/PA1，均不冲突。G4 的开桥与上电 PWM 自检均禁用；2026-11-17 用户反馈临时 PWM 测试正常、死区实测 990 ns，已关闭开机 demo，保留 1 µs 硬件死区配置；VTEMP 暂不配置，USB/SWD/低速晶振接口保留，CN3-23 禁止连接。核验方法与完整排针表见 docs/zh-CN/11-g474-board-guide.md。
+- 引脚/接线 → `01-hardware-and-wiring.md`；物理排针/板载占用 → `11-g474-board-guide.md`。
+- 生成配置 → `.ioc` 为源，必要说明只放 `04-cubemx-configuration.md`。
+- 模块接口/时序 → `06-driver-modules.md`；母线/VREF → `10-bus-voltage-adc.md`；性能统计 → `12-performance-monitoring.md`。
+- 启动许可、命令、默认值、操作限制、构建与验证方法 → `09-validation-and-maintenance.md`。
+- 应用编排/模块边界 → `07-architecture-and-flow.md`；理论/后续设计 → 02、03、05。
+- README 只做入口；不要因内部行为或参数变化同步改 README、AGENTS 和所有模块文档。
+- 只有维护规则变化才改 AGENTS；只有导航变化才改文档目录。
+- 排查过程、审查意见、临时诊断日志直接在会话反馈；按用户要求记录 ITO，不新增到 docs。
+- 不为每个 `.c/.h` 新建文章，不复制完整源码接口清单；多个职责变化时才更新多个归属主题，并说明原因。
 
 ---
 
@@ -185,62 +158,35 @@ static float adc_to_current(uint16_t raw)
 5. 占空比钳位 [5%, 92%]，不得为“试试看”而放开；
 6. 改相序只能在软件里做（电角度 +π），**不许调换电机线**（会破坏霍尔与相电压的对应）。
 
-当前实现状态：按维护者要求，v0.1 的 **8 A 软件限流暂缓实现，记作待优化**；8 A 设计目标不变，不能把占空比上限或低频电流打印视为已实现限流。
-
-VBUS 使用 ADC4 独立规则组，12 位、247.5 周期采样、轮询超时参数 1 ms；按 `raw × VREF实测值(V) × 25 / 4095` 换算。初始化或读取失败关桥并锁住启动入口，复位后重新校准；当前仅监视，包含 VREFINT 参考电压补偿，不包含过欠压保护或分压增益校准。
-
-G474 当前三个电流 ADC 是低频依次软件触发，不能标记为三 ADC 同步采集或已实现闭环/快速保护。
-
-六步输出由 `bsp_pwm_apply_pair()` 使用软件 COM 同时提交模式和使能：高相 PWM1、低相强制无效、第三相两路关闭。三相 CCR 维护相同非零占空比，写入通过短暂 UDIS 成组保护，运行换相不触发 UG；输出接口仅主循环单一写入方调用。启动和开桥前提交模式及 CCR，停机／异常先关 SD/MOE，再清使能并提交 COM。当前开桥禁用策略不变；同步 ADC 或电流环接入前需重新设计更新窗口。
+实际保护实现状态与已知限制仅在 [操作与验证](docs/zh-CN/09-validation-and-maintenance.md) 维护。
+PWM 输出与故障关断契约见 [模块接口](docs/zh-CN/06-driver-modules.md)；不得用低频状态打印代替快速保护。
 
 ---
 
 ## 8. 构建与烧录
 
-唯一 Keil 工程：`MDK-ARM/G474-FOC.uvprojx`，可通过根目录 `STM32-FOC.uvmpw` 打开。
+唯一工程为 `MDK-ARM/G474-FOC.uvprojx`。编译烧录流程和环境发现方法只在 [操作与验证](docs/zh-CN/09-validation-and-maintenance.md) 维护。
 
-- Agent 编译前先从 `PATH` 查找 `UV4.exe`；未找到时查询 Windows Keil 安装注册信息（包括 32 位注册表视图）或已有安装位置，并验证可执行文件存在。
-- 仅在当前终端设置 `KEIL_UV4`；禁止将本机安装路径、用户名、仓库绝对路径和本机环境清单写入受版本控制的文件。查找示例见 `docs/zh-CN/09-validation-and-maintenance.md`。
-- 工具链与设备包要求从 `.ioc`、`.uvprojx` 读取并与本机已安装环境核对，不为适配本机擅改工程编译选项。
-- Windows 在仓库根目录的 Git Bash 执行，工程、日志和测试参数均使用仓库相对路径：
+- 先发现并核实本机工具，禁止将安装路径、用户名、仓库绝对路径或本机环境清单写入受控文件。
+- 工具链要求以 `.ioc`、`.uvprojx` 为准，不为适配本机改工程编译选项。
+- 完成 Keil 编译、主机测试、结构检查；有 warning 必须解释，不能从编译通过推断实板通过。
+- 修改时钟、引脚、DMA 必须通过 CubeMX 重新生成；SDK 和生成区域保护规则继续适用。
 
-```bash
-: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
-: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
-"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
-python -X utf8 tests/run_native.py
-bash tests/check_structure.sh
-```
+## 9. 文档维护
 
-- 编译产物：`MDK-ARM/G474-FOC/G474-FOC.axf|.hex`。
-- 编译后必须检查 `build-g474.log` 的 `0 Error(s)`，有 warning 要说明原因。
-- 修改时钟、引脚、DMA 后必须回到 CubeMX 重新生成，不要手改生成代码。
-- 下载配置尚未实板验证；连接调试器后按 STM32G474RET6 选择目标，不能由编译通过推断烧录已验证。
+遵循第 2 节归属。文档只保存长期有效的接口、约束、操作方法与设计依据，不维护按开发轮次堆叠的工作报告。
+数值配置以源码/`.ioc` 为准，文档在归属主题解释含义，其他文章链接到它，不复制参数表。
 
----
+## 10. 提交前检查
 
-## 9. 文档要求
+- 编译、主机回归和 `bash tests/check_structure.sh` 通过；warning 已解释。
+- 注释、层次依赖、ISR 时限、故障关桥及 SDK 保护规则未被绕过。
+- 若契约/操作行为变更，只更新归属主题；检查中英文一致和链接有效。
+- 按用户指定范围暂存，提交说明使用中文；未授权时不自动提交或推送。
+- 用户明确要求仅提交代码时，不把文档混入该笔提交。
 
-- 每完成一个模块（`drv/`、`foc/` 下的一个 `.c/.h`），在 `docs/` 下补一篇说明：
-  功能、接口、调用时序、已知限制；
-- 修改引脚、限幅、控制参数时，同步更新 `README.md` 的“关键设计参数”与 `docs/zh-CN/01-hardware-and-wiring.md`；
-- 每升一个版本，记录：改了什么、为什么、实测数据（ISR 周期、抖动、波形）。
+## 11. 双语约定
 
----
-
-## 10. 提交前检查清单
-
-- [ ] 编译 0 error，warning 已解释
-- [ ] 涉及引脚/参数改动 → README、docs/zh-CN/01-hardware-and-wiring.md、AGENTS.md 三处同步
-- [ ] ISR 内没有阻塞调用、没有 printf
-- [ ] 新增魔法数字已具名化
-- [ ] 函数有头部注释，关键逻辑写了 WHY
-- [ ] 安全红线（死区、CTRL_SD 时序、限流）未被绕过
-- [ ] 涉及硬件行为的改动，已在文档中写清验证方法
-
-## 11. 双语文档约定
-
-- README.md 与 docs/en/ 为默认英文入口；README.zh-CN.md 与 docs/zh-CN/ 为对应中文版。
-- 同一主题两种语言使用相同文档编号与文件名，页首提供语言切换和目录链接。
-- 修改行为、引脚、参数或验证结论时同步维护两种语言；代码注释与提交说明仍使用中文。
-- docs/README.md 为双语总目录；docs 内源码路径默认相对于仓库根目录，实际链接须使用正确相对路径。
+README.md / docs/en 为英文入口，README.zh-CN.md / docs/zh-CN 为中文入口。
+每个主题保持同名中英文对照与页首导航；只同步本次受影响主题，不扩散到其他文档。
+代码注释、提交说明使用中文。文档链接使用仓库相对路径；器件资料只在本地保存。

@@ -4,11 +4,9 @@
 
 G474 runs at 170 MHz with nominal 20 kHz PWM. Performance accounting exists; current/speed loops and filtering below are future designs. Cycle counts and control-quality figures are estimates or targets, not measurements.
 
-## 1. CPU load and control timing
+## 1. Design scope
 
-`app/perf` uses DWT to account for the union of marked work and instrumented interrupt time and to time control tasks. The main loop reports once per second. Without current-loop calls, it reports `CURRENT=OFF`. See [performance monitoring](12-performance-monitoring.md) for exact definitions, wrap handling, and limitations.
-
-At 170 MHz the 32-bit counter wraps after about 25.26 s; reporting windows are about 1 s. Target current ISR time is <15 µs, with a hard deadline <50 µs. Average effective load does not replace worst-case execution validation.
+Frequencies, cycle budgets and filter values below are design examples, not configuration copies. Current capabilities belong to [09](09-validation-and-maintenance.md); implemented accounting interfaces belong to [12](12-performance-monitoring.md). Validate worst-case execution, not average load alone.
 
 ## 2. Proposed rates
 
@@ -19,7 +17,7 @@ f_cur = f_TIM1clk / (2 × ARR) = 170 MHz / (2 × 4250) = 20 kHz
 T_cur = 50 µs = 8500 CPU cycles
 ```
 
-The factor two comes from counting up to ARR and back down for one center-aligned PWM period. Present ADC reads are sequential software-triggered diagnostics. A channel theoretically takes `(247.5+12.5)/42.5 MHz≈6.12 µs`; three take at least about 18.35 µs plus software overhead. Future hardware triggering must select a valid low-side window and appropriate sampling time. RCR=1 alone does not prove correct sampling placement.
+The factor two comes from up/down center-aligned counting. Select ADC triggers and acquisition time within a valid low-side window; RCR=1 alone does not prove sampling placement. Existing acquisition contracts belong to [06](06-driver-modules.md).
 
 ### 2.2 Speed loop
 

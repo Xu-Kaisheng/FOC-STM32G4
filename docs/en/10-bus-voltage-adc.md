@@ -41,7 +41,7 @@ ADC4 does not add channels to the current sequence, change its trigger, or modif
 
 Host tests cover zero/~24 V/full-scale scaling, all acquisition failure stages, no invalid publication, runtime shutdown, and restart rejection. See [validation](09-validation-and-maintenance.md).
 
-Hardware checks remain pending: keep CTRL_SD low, verify wiring/common ground with a current-limited supply; compare bus/PB12 readings (24 V/0.96 V nominal) and 2 Hz UART reports; compare 12 V and 24 V points to a meter, recording raw/scaled error without exceeding board ratings. With power disconnected, disable ADC4 via debugger after startup to inject failure: expect error log, PC9 low, PWM off, and rejected `1`/`2` until reset. Verify PC0/PC1/PB1 current reporting and record task timing; recheck ISR jitter when current control is added.
+Hardware validation method: keep CTRL_SD low, verify wiring/common ground with a current-limited supply; compare bus/PB12 readings (24 V/0.96 V nominal) and 2 Hz UART reports; compare 12 V and 24 V points to a meter, recording raw/scaled error without exceeding board ratings. With power disconnected, disable ADC4 via debugger after startup to inject failure: expect error log, PC9 low, PWM off, and rejected `1`/`2` until reset. Verify PC0/PC1/PB1 current reporting and record task timing; recheck ISR jitter when current control is added.
 
 ## Limitations
 
@@ -55,4 +55,4 @@ Hardware checks remain pending: keep CTRL_SD low, verify wiring/common ground wi
 
 Initialization waits 1 ms after VREFINT is enabled. `VREF_mV=3000×factory_calibration/VREFINT_average` estimates VREF+. Zero codes, invalid calibration words and results outside the board diagnostic range of 2700–3600 mV are rejected. There is no fixed-3.3 V fallback, VREFBUF activation, or reference cache reused between cycles.
 
-Keep the bridge disabled and compare logged VREF with a meter at VREF+, then verify phase input voltages and VBUS. Hardware validation of this compensation remains pending.
+Keep the bridge disabled and compare logged VREF with a meter at VREF+, then verify phase input voltages and VBUS. Accuracy claims require measurements for the tested conditions.

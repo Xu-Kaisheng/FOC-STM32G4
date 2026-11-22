@@ -6,7 +6,7 @@
 
 统计逻辑位于 `src/app/perf/perf.c/.h` 与 `perf_print.c`，DWT 寄存器访问下沉到 `src/bsp/time/cycle.h`（全部 `static inline`）；这样 `bsp/uart` 不再自己做自计时，日志推进移到 `app/log`，依赖环被破除。通过 Cortex-M 的 DWT CYCCNT 记录 CPU 周期，每 1000 ms 从主循环输出。换算使用运行时 `SystemCoreClock`，当前为 170 MHz 配置。初始化在 `app_init()` 末尾，因此 ADC 启动校准不混入运行窗口。
 
-当前没有电流闭环，不能把低频 ADC 诊断称为电流环。G474 禁止开桥与上电 PWM 自检；临时开机 demo 已完成测试并关闭，启动诊断结束后初始化性能统计，因此正常运行时两个控制统计均显示 `OFF (no samples)`。未来解锁并运行六步模式后，`SIXSTEP` 显示真实换相输出函数耗时。
+当前没有电流闭环，不能把低频 ADC 诊断称为电流环。启动诊断结束后初始化性能统计。某类控制没有实际调用时显示 `OFF (no samples)`，执行时显示对应耗时；当前运行能力和启动策略只在 [09](09-validation-and-maintenance.md) 维护。
 
 | 日志字段 | 含义 |
 |---|---|
@@ -74,13 +74,3 @@
 2. 编译唯一 G474 Keil 目标，检查 0 error / warning；生成文件的修改仅限 ISR 的 USER CODE，工程文件只增加源文件条目。
 3. 实板先保持关桥，确认每秒出现 PERF 日志，G474 的 CURRENT/SIXSTEP 无样本；发送模式命令时，200 ms 忙等会使该窗口 busy 明显上升。
 4. 后续启用控制时，用 GPIO 翻转及示波器对照最大耗时，检查统计钩子和临界区的实际开销，并用真实负载验证超时次数。
-
-2026-11-16 验证结果：
-
-| 检查 | 结果 |
-|---|---|
-| G474 / ARMCC | 0 Error(s)、0 Warning(s)；Code 28140、RO 1492、RW 104、ZI 4496 字节 |
-| 主机回归 | 原运行/故障联锁、G474 平台、性能计时三组均通过 |
-| 生成区与工程选项 | 与本次修改前逐项对比，ISR 非 USER CODE 区域和G474 的 TargetOption 均未改变；原有源码注释保留 |
-
-本次尚未烧录或取得实板性能数据。

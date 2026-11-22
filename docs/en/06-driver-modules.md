@@ -2,7 +2,7 @@
 
 **English** | [简体中文](../zh-CN/06-driver-modules.md) | [Documentation index](../README.md)
 
-CubeMX initialization precedes `app_init()`. Core application/shutdown hooks stay in USER CODE regions. G474 is the sole platform: `bsp/board` supplies policy/parameters; ADC implementations and interfaces both live in `bsp/adc_cur/` and `bsp/adc_vbus/`. Layering rules: [13-repo-restructure.md](13-repo-restructure.md).
+CubeMX initialization precedes `app_init()`. Core application/shutdown hooks stay in USER CODE regions. G474 is the sole platform: `bsp/board` supplies policy/parameters; ADC implementations and interfaces both live in `bsp/adc_cur/` and `bsp/adc_vbus/`. Layering rules: [07-architecture-and-flow.md](07-architecture-and-flow.md).
 
 ## 1. PWM: bsp/pwm
 
@@ -22,9 +22,9 @@ CubeMX initialization precedes `app_init()`. Core application/shutdown hooks sta
 
 ### Startup and interlocks
 
-G474 refuses bridge enable. The retained path is bridge off → stop PWM → wait 200 ms → prepare equal phase duties → start → three-phase check → `alg_sixstep_apply` → six-step enable check. With MOE off, startup enables CCPC, disables external COM triggering and restores all phases to PWM1; mode/duty commits precede MOE/CEN enable. Rejection returns STOP.
+Operational policy and parameters belong to [09](09-validation-and-maintenance.md). The driver startup contract is bridge off → stop PWM → complete the bridge-off wait → prepare equal phase duties → start → three-phase check → `alg_sixstep_apply` → six-step enable check. With MOE off, startup enables CCPC, disables external COM triggering and restores all phases to PWM1; mode/duty commits precede MOE/CEN enable. Rejection returns STOP.
 
-Both checks validate MOE/CEN, ARR=4250, PSC=0, RCR=1, center-aligned mode 1, divider 1, DTG=149, OSSI/OSSR, CCR preload and active-high polarity, plus CCPC=1, CCUS=0, UDIS=0 and low idle levels on all phases. The three-phase check requires PWM1 and mask `0x555`; six-step requires the selected pair mask, PWM1 on the high phase, forced inactive on the others, and equal nonzero CCR values.
+Both checks validate MOE/CEN, board-matched period/dead time, expected center-aligned mode and clock divider, OSSI/OSSR, CCR preload and active-high polarity, plus CCPC=1, CCUS=0, UDIS=0 and low idle levels on all phases. The three-phase check requires PWM1 and mask `0x555`; six-step requires the selected pair mask, PWM1 on the high phase, forced inactive on the others, and equal nonzero CCR values.
 
 COM and update events commit mode, enable and CCR preloads before bridge enable. Running commutation generates only COM, without UG or counter reset. Hardware-triggered ADC work must recheck sampling effects. CCxE/CCxNE permit complementary outputs, not simultaneous conduction. HAL main and complementary starts are separate; this driver explicitly manages all six.
 
@@ -65,7 +65,7 @@ PC6/PC7/PC8 use pull-ups; U/V/W occupy bits 2/1/0. `bsp_hall_read()` returns 1�
 |---|---|---|---|---|---|---|
 | Relative angle | 0° | 60° | 120° | 180° | 240° | 300° |
 
-See [review evidence](08-review-findings.md) for vendor bit-order conversion. S1 is relative zero only; direction/electrical offset remain uncalibrated. Open-loop code does not call this angle function. Invalid input returns 0°, so angle alone cannot prove validity.
+See the sample’s W/V/U bit order converted to this project’s U/V/W order for vendor bit-order conversion. S1 is relative zero only; direction/electrical offset remain uncalibrated. Open-loop code does not call this angle function. Invalid input returns 0°, so angle alone cannot prove validity.
 
 ## 4. Debug UART: bsp/uart + app/log
 
@@ -91,15 +91,7 @@ Hardware and business are separated:
 
 `app_log_task()` times reclamation and DMA submission only after confirming there is queue work. Empty queues and DMA-busy returns fall into `poll`. A rejected submission still counts as a work attempt; later main-loop iterations retry it. The BSP has no dependency on application performance accounting.
 
-## 5. Application and limitations
-
-Commands: `0` stop; `1`/`2` forward/reverse (rejected today); `h` Hall monitor; `+`/`-` duty; `>`/`<` electrical frequency; `?` help. Help is split to avoid truncation.
-
-Sequence: U+V−, U+W−, V+W−, V+U−, W+U−, W+V−. Only the floating phase is disabled; high phase is chopped, low phase has 0% high-side duty. Ranges: 5%–60%, 0.5–20 electrical Hz. Millisecond main-loop scheduling adds quantization/jitter. No current loop, synchronous sampling, or software current limiter is running.
-
-The application layer is split by responsibility: `app/app` (init, mode interlocks, main loop, shared state), `app/cmd` (commands), `app/control` (algorithm strategy), `app/log` (log queue), `app/perf` (performance), `app/status` (status output). Every subfolder exposes a `*_task()` entry called from `app_task()`.
-
-## 6. Six-step strategy and algorithm: app/control + algorithm/sixstep
+## 5. Six-step strategy and algorithm: app/control + algorithm/sixstep
 
 | Module | Responsibility |
 |---|---|
@@ -116,3 +108,5 @@ app_task → app_control_task → alg_sixstep_next_step / alg_sixstep_apply
 The algorithm layer includes no BSP/application header, so it can be host-tested without hardware and the same callback mechanism can serve FOC later. The bridge interlock still calls `bsp_pwm_enable_bridge_sixstep()` from `app/control`.
 
 See [validation](09-validation-and-maintenance.md) for hardware verification.
+
+Commutation order: U+V− → U+W− → V+W− → V+U− → W+U− → W+V−; reverse traverses it backward. Operating parameters and commands belong only to [09](09-validation-and-maintenance.md).

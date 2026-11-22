@@ -1,19 +1,46 @@
-# 09 Validation and maintenance
+# 09 Operation, build and validation
 
 **English** | [简体中文](../zh-CN/09-validation-and-maintenance.md) | [Documentation index](../README.md)
 
-The sole target is STM32G474RET6 / DevEBox Ver.20, running bridge-off diagnostics. On 2026-11-17 the user reported a successful temporary boot PWM test and **990 ns dead time**. The demo is disabled; voltage, ADC offset, and control timing still need validation.
+This page owns current capabilities, drive permission, commands and operating parameters. Wiring belongs to [01](01-hardware-and-wiring.md), module contracts to [06](06-driver-modules.md).
 
-## Software checks
+## Capabilities and limits
 
-Agents must discover the installed tools before building, without assuming a drive letter or installation directory:
+- Boot is STOP: CTRL_SD low, boot PWM self-test disabled. Explicit `1`/`2` commands start open-loop six-step operation only after ADC/PWM interlocks pass.
+- Commutation follows commanded electrical frequency. Hall input is monitoring only, not rotor-position feedback. No automatic alignment, acceleration ramp, current loop or speed loop; smooth low-speed tracking is not guaranteed.
+- Current acquisition is sequential software triggering; bus/VREF acquisition is separate. Status reports every 500 ms. Reference compensation: [10](10-bus-voltage-adc.md); performance accounting: [12](12-performance-monitoring.md).
+- The maintainer deferred the 8 A software limiter. No over/undervoltage, stall or loss-of-synchronism protection. Slow current reports and duty clamps are not current limiting.
+- ADC initialization/acquisition/freshness failures disable power and latch startup lockout until reset. PWM rejection returns STOP. Mode transitions stop power/PWM and wait 200 ms.
 
-1. Check `PATH` with `command -v UV4.exe` in Git Bash or `Get-Command UV4.exe` in PowerShell.
-2. If absent, read `Path` under `HKLM\SOFTWARE\Keil\Products\MDK` or `HKLM\SOFTWARE\WOW6432Node\Keil\Products\MDK`. This usually points to the ARM toolchain subdirectory; locate `UV4/UV4.exe` under the installation root and verify it exists. An installed Keil shortcut can also identify the executable.
-3. Set `KEIL_UV4` in the current Git Bash session and always quote it when invoking it. If discovery fails, report the missing tool rather than guessing a path or installing/modifying an SDK.
-4. Read project requirements from `MxCube.Version` and `ProjectManager.FirmwarePackage` in `G474-FOC.ioc` and the compiler/device-pack fields in `.uvprojx`, then check the installed environment. Project metadata is authoritative; do not duplicate a machine-specific software inventory in documentation.
+## UART commands
 
-Keep installation paths in shell environment variables or ignored local files. Do not commit usernames, absolute checkout paths, or local discovery output. Run from the repository root in Git Bash:
+UART setup/wiring: [01](01-hardware-and-wiring.md). Commands are single characters; no newline is required.
+
+| Command | Behavior |
+|---|---|
+| `0` | Stop and disable bridge |
+| `1` / `2` | Forward / reverse six-step request; determine shaft direction by observation |
+| `h` | Bridge-off Hall transition monitoring |
+| `+` / `-` | Increase/decrease duty by 5 percentage points |
+| `>` / `<` | Multiply/divide electrical frequency by 1.5 |
+| `?` | Help |
+
+| Parameter | Value | Source |
+|---|---|---|
+| Initial electrical frequency / range | 1 Hz / 0.5–20 Hz | `src/app/control/app_control.c` |
+| Initial duty / range | 20% / 5%–60% | Same source |
+| Bridge-off transition wait | 200 ms | `src/app/app/app.c` |
+| Command increments | 5 percentage points / frequency ratio 1.5 | `src/app/cmd/app_cmd.c` |
+
+`1`/`2` preserve frequency/duty; reset restores defaults. Six steps form one electrical period, with approximately `1000/(6×f)` ms per step, subject to integer rounding and main-loop jitter. With two pole pairs, synchronous tracking gives `rpm=60×f/2`, or about 30 rpm by default. Logged f is a command, not measured speed. Half-second Hall snapshots skip transitions and cannot alone establish reversal.
+
+## Build and download
+
+The only project is `MDK-ARM/G474-FOC.uvprojx`; `STM32-FOC.uvmpw` is its workspace entry.
+
+1. Locate `UV4.exe` on PATH (`Get-Command UV4.exe` on Windows). Otherwise inspect Path under `HKLM\SOFTWARE\Keil\Products\MDK` or its 32-bit view `HKLM\SOFTWARE\WOW6432Node\Keil\Products\MDK`, locate UV4 and verify the executable exists.
+2. Set `KEIL_UV4` only for the current terminal. Read toolchain/device-pack requirements from `.ioc`/`.uvprojx`. Do not change compiler options for a personal installation or commit local paths/environment inventories.
+3. Run from the repository root in Git Bash on Windows:
 
 ```bash
 : "${KEIL_UV4:=$(command -v UV4.exe || true)}"
@@ -23,42 +50,24 @@ python -X utf8 tests/run_native.py
 bash tests/check_structure.sh
 ```
 
-Keil resolves the relative `-o` path against the project directory, `MDK-ARM/`; `../build-g474.log` therefore writes the log at the repository root. Host tests find existing MSVC with `vswhere`; no SDK installation/modification. Check that the build log is fresh and contains `0 Error(s)`; explain any warnings. Logs and build output are excluded by `.gitignore`.
+Keil log paths are relative to the project directory; `../` selects the repository root. Check the new log for `0 Error(s)` and explain warnings. Outputs are `MDK-ARM/G474-FOC/G474-FOC.axf|.hex`; outputs/logs are ignored by Git.
 
-| Suite | Coverage |
+Before download verify MCU, probe and configuration, with the power stage in a controlled stopped state. With user authorization, use the existing Keil download setup:
+
+```bash
+"$KEIL_UV4" -f "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-flash.log"
+```
+
+Check `Verify OK`, application startup and UART. Compilation does not establish successful programming, and programming does not validate rotation. Release the UART port after capture.
+
+## Regression and hardware checks
+
+| Test | Coverage |
 |---|---|
-| `test_runtime` | PWM interlocks, Hall mapping, UART queue, real application startup/stop, ADC failure lockout |
-| `test_g474` | Actual platform ADC complete samples, ADC4 VBUS, disabled bridge/boot-test policy |
-| `test_perf` | Work-time union, nested interrupts, DWT wrap, deadline budget, reporting |
+| test_runtime | PWM/COM interlocks, no automatic boot output, startup/stop, UART, ADC fault latch |
+| test_g474 | Actual board policy, ADC conversion/completeness, VREFINT |
+| test_perf | Work union, nested interrupts, wrap and DWT recovery |
 
-Runtime substitutes can allow drive to exercise six-step/fault paths. Real G474 policy remains 0, checked by `test_g474`. Register substitutes cannot verify physical complementary output, dead time, or analog accuracy.
+Host models cannot validate dead time, electrical polarity or real analog sampling. Use the changed module’s hardware method: [PWM/current/Hall/UART](06-driver-modules.md), [bus/VREF](10-bus-voltage-adc.md), [performance](12-performance-monitoring.md). Keep raw logs and experiments in local build output or the conversation, not rolling manual entries.
 
-## Hardware order
-
-1. Check empty J3, PB10/PB11, SWD, grounds, STM32G474RET6 download target.
-2. Keep bridge off; expect MONITOR ONLY, rejected `1`/`2`, PC9 low.
-3. Hand-turn to inspect Hall. Measure analog inputs/divider before connecting and compare raw/scaled values.
-4. Boot demo is disabled. Explicitly enable a bridge-off test before future rechecks; start capture then reset. Inspect PA8/PB13, PA9/PB14, PA10/PB15 for 20 kHz and 1 µs both-low gaps.
-5. Implement synchronous acquisition, current control, and fast 8 A protection before validating same-cycle completeness, worst-case time, latching, and loaded operation.
-
-## Cleanup checkpoint: 2026-11-16
-
-- G474 rebuild: 0 errors/warnings; Code=28140, RO=1492, RW=104, ZI=4496 bytes.
-- Three host suites passed, using G474 ADCs, Hall PC6/7/8, SD PC9, ARR=4250, DTG=149.
-- At that checkpoint, 104 Core/Drivers/CubeMX/Keil files matched pre-cleanup SHA-256 hashes; cleanup did not change drive policy.
-- One project, resolvable source paths/Markdown links; no hardware flashing or measurements during that cleanup checkpoint.
-
-The later user-reported PWM measurement does not establish ADC accuracy or loaded protection.
-
-## 2026-11-17 post-restructure flash validation
-
-- Rebuild: 0 errors/warnings; Code=30904, RO=1488, RW=104, ZI=4608 bytes.
-- J-Link download: Erase/Program/Verify OK, target 3.283 V; the application started automatically.
-- 115200 8N1 over the J-Link CDC UART: boot log `[BOARD] G474RET6 DevEBox / MONITOR ONLY`, `STM32-FOC v0.1 boot`, `HALL=INV`; `?` help works; `1` returns `[LOCK] Board wiring not verified, monitor only` and the bridge stays off.
-- DMA log transmission and command reception work; no truncated long lines observed.
-- Bus voltage reads about 22.2–22.4 V (raw 1099–1113); the scaling path is alive.
-- Phase-current raw values are about 362/445/985, displayed as -7.9/-7.4/-3.8 A, far from the expected 1.25 V (raw≈1551) zero-current offset. The current-sense chain is not at its expected zero; **do not treat these as valid currents** and do not enable the bridge before checking wiring and offset.
-- Hall reads `INV` (000/111), consistent with no motor/Hall wiring attached.
-- Performance accounting works while J-Link is attached (CPU work≈55.8%, irq≈0.53 ms/s); after J-Link disconnects it permanently reports `[PERF] unavailable`, i.e. DWT counting depends on the debug domain on this board. Follow-up: check DBGMCU/debug clock or use a timer timebase for standalone statistics.
-
-Not performed: loaded bridge operation, PWM waveform recheck, synchronous current sampling, or current limiting. These results do not replace power-stage acceptance.
+For the first unloaded test, secure the motor, use a hardware-current-limited supply and prepare power disconnect. Start in STOP; check legal Hall states, zero-current inputs and bus voltage. Send `-` individually until 5%, then briefly try `1` and stop with `0`. Wait for a complete stop before `2`. Failure to start at low duty does not prove wrong phase order; do not keep increasing duty against a stalled rotor. Stop on abnormal vibration/noise or supply limiting. Record continuous direction, Hall transitions and commutation timing before changing control. Do not claim smooth tracking or load validation without evidence.

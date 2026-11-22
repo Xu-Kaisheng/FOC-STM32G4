@@ -1,39 +1,25 @@
-# 04 CubeMX 配置说明
+# 04 CubeMX 配置维护
 
 [English](../en/04-cubemx-configuration.md) | **简体中文** | [文档目录](../README.md)
 
-唯一配置源为 `G474-FOC.ioc`。CubeMX 与固件包版本以该文件的元数据为准；编译器与设备包要求读取 `MDK-ARM/G474-FOC.uvprojx`。Agent 按 [验证与维护](09-validation-and-maintenance.md) 查找并核对本机环境，不在文档维护个人安装清单。
+本页维护生成配置的来源和再生成流程，不复制接线表或运行策略。
 
-## 当前生成配置
+## 配置来源
 
-| 模块 | 配置 |
+| 内容 | 唯一来源 |
 |---|---|
-| MCU | STM32G474RET6，LQFP64 |
-| RCC | HSI 16 MHz，PLLM=4、PLLN=85、PLLR=2，SYSCLK=170 MHz |
-| TIM1 | PSC=0、ARR=4250、RCR=1，中心对齐模式 1，PWM1，主/互补输出高有效 |
-| BDTR | CKD=1、DTG=149，死区 1 µs，OSSI/OSSR 开启，AOE 关闭 |
-| GPIO | PC9 输出初始化低；PC6/PC7/PC8 上拉输入 |
-| ADC1 | PC0 / IN6，相电流 U |
-| ADC2 | PC1 / IN7，相电流 V |
-| ADC3 | PB1 / IN1，相电流 W |
-| ADC4 | PB12 / IN3，母线分压 |
-| ADC 公共参数 | 独立模式、SYSCLK/4=42.5 MHz、12 位右对齐、247.5 周期、规则组单通道软件触发 |
-| USART3 | PB10 TX / PB11 RX，115200 8N1 |
-| DMA | DMA1_Channel2，DMAMUX 请求 USART3_TX，NORMAL、字节、内存递增；DMA1_Channel2 与 USART3 中断抢占优先级 15 |
-| 调试 | PA13 SWDIO / PA14 SWCLK |
+| 时钟、GPIO、定时器、ADC、DMA、串口 | [G474-FOC.ioc](../../G474-FOC.ioc) |
+| 工具链、设备包、源文件与包含路径 | [Keil 工程](../../MDK-ARM/G474-FOC.uvprojx) |
+| 运行时板级校验参数 | [board.c](../../src/bsp/board/board.c) |
+| TIM1 模式提交与使能 | [PWM 模块契约](06-driver-modules.md) |
+| ADC4 序列与参考电压采集 | [母线/VREF](10-bus-voltage-adc.md) |
 
-PA8/PA9/PA10 为 TIM1_CH1/2/3（AF6），PB13/PB14 为 CH1N/2N（AF6），PB15 为 CH3N（AF4）。详细接线及板载占用见 docs/zh-CN/01-hardware-and-wiring.md、docs/zh-CN/11-g474-board-guide.md。
+生成值和运行时覆盖必须分别核对。例如 PWM 启停会管理 AOE、CCPC、COM，不可仅从 CubeMX 初始模式推断运行输出。引脚分配见 [01](01-hardware-and-wiring.md)，复用/板载占用证据见 [11](11-g474-board-guide.md)。
 
-`(64+21)×2/170 MHz = 1 µs` 对应 DTG=149。当前 ADC 单通道理论转换时间约 `(247.5+12.5)/42.5 MHz = 6.12 µs`，三路依次软件调用并非同步采样。TIM1 的 20 kHz 配置不代表电流环已经运行。
+## 重新生成
 
-## 重新生成注意事项
-
-1. 只修改 `.ioc` 并经 CubeMX 重新生成外设配置，不手改生成区。
-2. 保留 `Core` 的 USER CODE 中应用入口、异常关桥及 SysTick 性能统计钩子。
-3. 确认 Keil 仍引用 `src/app`、`src/bsp` 下的全部源码条目（分组见 [13-repo-restructure.md](13-repo-restructure.md)）。
-4. HAL/CMSIS、启动文件及编译选项按工程规则保护；SDK 不手工修改。
-5. 重编译并检查 0 error / warning；硬件时序修改后需重新测量，不能用配置值代替实测。
-
-USART3 的 DMA 仅由 CubeMX 生成（`Core/Src/dma.c` 与 `HAL_UART_MspInit()` 中的 `hdma_usart3_tx`），驱动不手工使能 DMA 时钟；中断优先级设为 15 以保证串口不会抢占未来的电流环。
-
-当前板级策略禁止开桥及上电 PWM 自检，临时抓波 demo 已完成测试并关闭，没有新增同步 ADC 触发、中断电流环或快速保护。
+1. 修改 `.ioc`，通过 CubeMX 生成，禁止手改 Core 非 USER CODE 区和 HAL/CMSIS。
+2. 保留应用入口、异常关桥、IRQ 性能钩子，以及 Keil 的 App/Algo/BSP 源文件和包含路径。
+3. 串口 DMA 和 NVIC 配置由 CubeMX 生成，BSP 不自行补开时钟；不要改编译选项适配本机环境。
+4. 对比生成差异，确认没有丢失用户代码，再按 [09](09-validation-and-maintenance.md) 编译、回归和检查结构。
+5. 时钟、引脚、采样触发或输出时序改变后，执行对应模块硬件验证；配置值不是实测结果。

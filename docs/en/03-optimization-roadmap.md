@@ -2,7 +2,9 @@
 
 **English** | [简体中文](../zh-CN/03-optimization-roadmap.md) | [Documentation index](../README.md)
 
-Scope: STM32G474RET6 + ATK-PD6010B + BL57H95, Hall FOC, nominal 20 kHz. Establish motion, then stability and quality, then optimize execution. **Roadmap figures are estimates or acceptance targets, not measured improvements.** Current hardware has a schematic-checked bridge-off diagnostic project; synchronized acquisition and closed-loop control remain pending.
+> This page owns design options and acceptance targets, not current implementation progress. See [09](09-validation-and-maintenance.md) for capabilities; source/`.ioc` own configuration values.
+
+Scope: STM32G474RET6 + ATK-PD6010B + BL57H95, Hall FOC, nominal 20 kHz. Establish motion, then stability and quality, then optimize execution. **Roadmap figures are estimates or acceptance targets, not measured improvements.** Implementation status belongs only to [operation](09-validation-and-maintenance.md).
 
 ## 0. Baseline
 

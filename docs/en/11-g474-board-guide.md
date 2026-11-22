@@ -2,11 +2,7 @@
 
 **English** | [简体中文](../zh-CN/11-g474-board-guide.md) | [Documentation index](../README.md)
 
-## Current scope
-
-Only STM32G474RET6 / DevEBox Ver.20 is supported. `STM32-FOC.uvmpw` opens `MDK-ARM/G474-FOC.uvprojx`; the configuration source is root `G474-FOC.ioc`.
-
-The project builds and supports UART, Hall, phase-current, and bus-voltage diagnostics. This does not establish completed motor control. Current ADCs are **sequentially software triggered**, not sampled by a common PWM event. There is no current loop. Bridge-enable and boot-self-test policies both return 0. The temporary boot demo has been tested and disabled.
+This page owns physical headers, shared nets and power references for DevEBox Ver.20. CN2/CN3 wiring belongs to [01](01-hardware-and-wiring.md); operation/build belong to [09](09-validation-and-maintenance.md).
 
 ## What the photographs establish
 
@@ -38,35 +34,9 @@ Rear-view SWD labels from left to right are RST/SWCLK/SWDIO/GND/3V3. PB8 is mark
 
 PA13/PA14 serve SWD, PA11/PA12 native USB, PC14/PC15 LSE; reserve them. Onboard occupancy is checked below. Leave J3 unpopulated.
 
-## Driver-board wiring
+## Driver interface
 
-Selected pins were matched against the rear photo, CubeMX LQFP64 database, generated code, and DS12288 Rev 6. **The assignment is usable if J3 stays empty and display functions are not enabled concurrently.** Schematic checks do not establish physical continuity/voltage; the later PWM measurement is recorded separately below.
-
-| CN3 | Signal | MCU | Peripheral | Rear-view position |
-|---:|---|---|---|---|
-| 17 | PWM_UH | PA8 | TIM1_CH1 | Right 7 outer |
-| 18 | PWM_UL | PB13 | TIM1_CH1N | Right 4 inner |
-| 19 | PWM_VH | PA9 | TIM1_CH2 | Right 8 inner |
-| 20 | PWM_VL | PB14 | TIM1_CH2N | Right 4 outer |
-| 21 | PWM_WH | PA10 | TIM1_CH3 | Right 8 outer |
-| 22 | PWM_WL | PB15 | TIM1_CH3N | Right 5 inner |
-| 24 | CTRL_SD | PC9 | Push-pull, default low | Right 7 inner |
-| 2 | HALL U | PC6 | Pull-up input | Right 5 outer |
-| 4 | HALL V | PC7 | Pull-up input | Right 6 inner |
-| 6 | HALL W | PC8 | Pull-up input | Right 6 outer |
-| 10 | AMP_IU | PC0 | ADC1_IN6 | Left 13 inner |
-| 12 | AMP_IV | PC1 | ADC2_IN7 | Left 12 outer |
-| 14 | AMP_IW | PB1 | ADC3_IN1 | Left 5 outer |
-| 8 | VBUS | PB12 | ADC4_IN3 | Right 3 inner |
-| 7,16 | GND | GND | Connect both | Confirmed ground pins |
-| 15 | VTEMP | Disconnected | Unconfigured | — |
-| 23 | 5V_IN | **Do not connect** | Prevent backfeeding | — |
-
-CN3-1/3/5 encoder and 9/11/13 BEMF remain disconnected. Use the signal labels and table, not cable order.
-
-USART3: PB10 (left 4 inner) → USB–TTL RX; PB11 (left 4 outer) → USB–TTL TX; common ground; 115200 8N1, 3.3 V logic. Type-C is native MCU USB, with no USB CDC firmware and no onboard USB–UART bridge.
-
-Four ADCs reserve independent resources for later work, but trigger compatibility, sample time, and valid PWM windows still need implementation/measurement. No zero-skew claim is made.
+Use the single CN2/CN3 wiring table in [01](01-hardware-and-wiring.md). This page maps MCU pins to physical board headers without copying the CN3 assignment.
 
 ## Onboard nets checked on 2026-11-16
 
@@ -109,75 +79,6 @@ The user confirmed their J-Link 3V terminal is a power output. For standalone bo
 
 R11/R10 connect the rail to VDDA/VREF+. If actual supply is 3.0 V while scaling assumes 3.3 V, inferred ADC input voltage is about 10% high, and current-offset subtraction is affected. ADC4 now measures VREFINT for compensation; compare its VREF+ result with a meter. Analog range follows actual VDDA/VREF+, not digital-pin voltage-tolerance rules.
 
-## Project organization
+## References
 
-```text
-STM32-FOC.uvmpw              Single Keil entry
-G474-FOC.ioc                 CubeMX source
-Core/ Drivers/ MDK-ARM/      Generated setup, vendor SDK, Keil
-src/app/                    Application: app/, cmd/, control/, log/, perf/, status/
-src/algorithm/              Pure algorithms: sixstep/, foc/
-src/third_party/            External libraries (reserved)
-src/bsp/                    Board layer: board/, pwm/, hall/, adc_cur/, adc_vbus/, uart/, time/
-```
-
-The application does not access HAL ADC handles. Regeneration must preserve the `src/app` and `src/bsp` entries and the USER CODE application, emergency-stop, and performance hooks. Layout and dependency rules: [13-repo-restructure.md](13-repo-restructure.md).
-
-## Configuration and measured PWM test
-
-The temporary 2026-11-17 firmware produced 10 seconds of three in-phase complementary PWM pairs at 20 kHz with CCR=50% ARR and nominal 1 µs dead time. PC9 stayed low by design. Completion stopped counter/MOE/channel enables, cleared CCRs, and entered diagnostics. The user reported normal operation and **990 ns dead time**. Boot test is now disabled and the temporary 10-second duration reverted; the original dormant self-test entry and hardware dead time remain. No capture file, sample rate, or per-channel measurement set was supplied, so this does not certify loaded power-stage operation.
-
-To repeat later, explicitly enable a bridge-off self-test. Connect PA8/PB13, PA9/PB14, PA10/PB15 and GND; optionally capture PC9; leave J3 empty. Start capture before reset, preferably ≥20 MS/s, trigger on PA8 rising. Expect ~50 µs periods, ~1 µs both-low switching gaps, and no both-high overlap. Dead time reduces ideal 25 µs high pulses to roughly 24 µs (~48% actual duty). The three test phases have no 120° offset. A lower-rate long capture can separately verify timed stop.
-
-| Item | Configuration |
-|---|---|
-| Clock | HSI 16 MHz / 4 ×85 /2 = 170 MHz; no HSE dependency |
-| TIM1 | Center-aligned mode 1; PSC=0, ARR=4250, RCR=1, 20 kHz |
-| Dead time | Divider 1, DTG=149; `(64+21)×2/170 MHz=1 µs` |
-| Output policy | AOE off; boot self-test off; bridge enable prohibited |
-| Duty | Common 5%–92%; six-step 5%–60%, drive locked |
-| ADC1–4 | Independent, 12-bit right-aligned, one regular software-triggered channel each, 247.5 sampling cycles |
-| ADC kernel | 42.5 MHz; ~6.12 µs theoretical single conversion, excluding software |
-| Monitoring | 500 ms; sequential phase reads and independent ADC4 |
-| Temperature/VREFINT | Temperature pending; ADC4 averages 16 pairs to estimate VREF+ |
-| Control/protection | Common trigger, same-cycle aggregation, current loop, 8 A limit pending |
-
-`app_board_drive_allowed()` and `app_board_boot_test()` return 0. Application command handling and the PWM driver independently reject power enable. Do not remove this policy based on compilation alone.
-
-## Development and verification order
-
-1. With power removed, check physical labels/header orientation/J3 against J4/J5 numbers; use continuity checks for assembly differences.
-2. Connect debugger/UART first. Expect `G474RET6 DevEBox / MONITOR ONLY`, rejected `1`/`2`, PC9 low, no automatic PWM.
-3. With bridge disabled, verify Hall output levels, hand-turn codes, analog ground voltages; expect ~0.96 V divider at 24 V bus and ~1.25 V at zero current.
-4. Validate complementary polarity/dead time as required, then implement common ADC triggering, completeness, and fast protection.
-5. Current 2 Hz sequential reads are wiring diagnostics, not loaded current limiting or proof of simultaneous samples. Follow the [roadmap](03-optimization-roadmap.md).
-
-The 2026-11-16 checkpoint covered drawings and documentation only. The later user-reported PWM check is recorded above.
-
-## Performance monitoring
-
-DWT reports effective work ratio/time, polling time, and instrumented interrupts every second. Six-step/current calls are absent under the locked policy, so `SIXSTEP=OFF` and `CURRENT=OFF` are expected. See [performance monitoring](12-performance-monitoring.md).
-
-## References and build
-
-Local references, not distributed in this repository:
-
-- Product photo: `datasheet/STM32G474RET6/Snipaste_2026-11-15_15-44-29.png`.
-- Rear photo supplied by the user; original JPG was not found in the local reference folder at documentation time. Header locations were cross-checked with the schematic.
-- Board schematic: `datasheet/STM32G474RET6/STM32G474R开发板-原理图--202508.pdf`, three pages.
-- MCU datasheet: `STM32G474R数据手册.pdf`, DS12288 Rev 6, 236 pages, in the same folder.
-- ADC guidance: `如何在STM32微控制器中获得最佳ADC精度.pdf`, AN2834.
-- CubeMX device description `STM32G474R(B-C-E)Tx.xml`, cross-checked against generated GPIO alternates/ADC channels; the CubeMX version is recorded in `.ioc` metadata.
-- [STM32CubeG4](https://github.com/STMicroelectronics/STM32CubeG4); use `.ioc` and vendored SDK metadata for versions. SDK content is read-only.
-- Read Keil compiler/device-pack requirements from `.uvprojx`; agents discover installation locations on the current machine.
-
-Locate Keil and set `KEIL_UV4` in the current shell as described in [validation and maintenance](09-validation-and-maintenance.md), then run from the repository root in Git Bash:
-
-```bash
-: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
-: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
-"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
-python -X utf8 tests/run_native.py
-```
-
-Check `0 Error(s)`; firmware output is in `MDK-ARM/G474-FOC/`.
+Board schematics, DS12288, RM0440 and the driver-board manual are local read-only `datasheet/` references. Firmware configuration lives in `.ioc` and source; see [generated configuration](04-cubemx-configuration.md). Drawing checks do not establish identical assembly on every board; verify labels and orientation before wiring.

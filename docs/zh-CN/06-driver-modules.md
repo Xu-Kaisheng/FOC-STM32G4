@@ -4,7 +4,7 @@
 
 本文对应当前 `src/` 模块。CubeMX 外设初始化完成后由 `app/app/app.c` 的 `app_init` 组装调用；Core 只在 USER CODE 区接入应用和故障关断。
 
-当前仅支持 G474：应用通过 `bsp/board` 获取板级参数；电流和母线 ADC 实现与接口同在 `bsp/adc_cur/`、`bsp/adc_vbus/`。目录分层与依赖规则见 [13-repo-restructure.md](13-repo-restructure.md)。
+当前仅支持 G474：应用通过 `bsp/board` 获取板级参数；电流和母线 ADC 实现与接口同在 `bsp/adc_cur/`、`bsp/adc_vbus/`。目录分层与依赖规则见 [07-architecture-and-flow.md](07-architecture-and-flow.md)。
 
 ## 1. PWM 驱动：bsp/pwm
 
@@ -24,9 +24,9 @@
 
 ### 启动与联锁
 
-当前 G474 的开桥策略禁止使能。保留的六步驱动路径供后续验证，启动流程为：关桥 → 停 PWM → 等 200 ms → 三相装入相同占空比 → bsp_pwm_start → 三相自检 → alg_sixstep_apply → 六步专用开桥检查。启动在 MOE 关闭时启用 CCPC、关闭外部 COM 触发并恢复三相 PWM1，提交模式和占空比后才置 MOE/CEN。任一步拒绝开桥，应用退回 STOP。
+应用运行策略与参数见 [09](09-validation-and-maintenance.md)。驱动启动契约为：关桥 → 停 PWM → 满足关桥等待时间 → 三相装入相同占空比 → bsp_pwm_start → 三相自检 → alg_sixstep_apply → 六步专用开桥检查。启动在 MOE 关闭时启用 CCPC、关闭外部 COM 触发并恢复三相 PWM1，提交模式和占空比后才置 MOE/CEN。任一步拒绝开桥，应用退回 STOP。
 
-两类联锁共用波形配置检查：MOE/CEN 有效、ARR=4250、PSC=0、RCR=1、中心对齐模式 1、CKD=1、DTG=149、OSSI/OSSR 有效、CCR 预装载及主/互补输出高有效；要求 CCPC=1、CCUS=0、UDIS=0、三相空闲电平为低。三相自检要求 PWM1 和使能掩码 0x555；六步入口要求指定两相掩码、高相 PWM1、其余相强制无效，以及三路 CCR 相同且非零。
+两类联锁共用波形配置检查：MOE/CEN 有效、周期与死区符合 board 参数、预期中心对齐模式与时钟分频、OSSI/OSSR 有效、CCR 预装载及主/互补输出高有效；要求 CCPC=1、CCUS=0、UDIS=0、三相空闲电平为低。三相自检要求 PWM1 和使能掩码 0x555；六步入口要求指定两相掩码、高相 PWM1、其余相强制无效，以及三路 CCR 相同且非零。
 
 开桥前提交 COM 和更新事件，确保读回的模式、使能和 CCR 预装载均已生效。运行中换相只产生 COM，不使用 UG、不重置计数器。该动作适用于当前软件触发 ADC 的 v0.1；后续改硬件触发时必须重新核对更新事件和采样时序。
 
@@ -57,7 +57,7 @@ NMI、HardFault、MemManage、BusFault、UsageFault 及 Error_Handler 在死循�
 | `uint8_t bsp_adc_cur_init(void)` | 关桥时调用，句柄由平台管理；1 成功，0 失败，失败后保持关桥并复位重试 |
 | `uint8_t bsp_adc_cur_read(adc_cur_sample_t *out, uint16_t vref_mv)` | 1 成功；0 失败且 out 保持原值，不得使用旧样本 |
 
-初始化：依次校准 ADC1/ADC2/ADC3，任一路失败保持未就绪。通道由 CubeMX 生成，分别为 PC0/IN6、PC1/IN7、PB1/IN1。
+初始化：依次校准 ADC1/ADC2/ADC3，任一路失败保持未就绪。通道由 CubeMX 生成，分配见 [接线表](01-hardware-and-wiring.md)。
 
 读取：依次软件启动每个 ADC 的规则组 → 轮询完成（超时参数 1 ms）→ 读取单通道结果 → 停止转换。仅三路全部成功才发布完整样本；任何失败不覆盖调用者的输出，应用关桥并锁住启动入口。
 
@@ -67,7 +67,7 @@ v0.1 每 500 ms 软件采样仅用于状态监视，未与下管采样窗口同�
 
 ## 3. 霍尔：bsp/hall
 
-PC6/PC7/PC8 上拉输入，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_hall_read 返回原始编码 1～6，000/111 返回 HALL_INVALID；bsp_hall_get_state_str 用于打印原始状态。
+引脚见 [接线表](01-hardware-and-wiring.md)，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_hall_read 返回原始编码 1～6，000/111 返回 HALL_INVALID；bsp_hall_get_state_str 用于打印原始状态。
 
 调用顺序：bsp_hall_read → 排除 HALL_INVALID → bsp_hall_get_sector_deg。
 
@@ -75,7 +75,7 @@ PC6/PC7/PC8 上拉输入，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_
 |---|---|---|---|---|---|---|
 | 相对扇区角度 | 0° | 60° | 120° | 180° | 240° | 300° |
 
-该表来自样例位序换算，证据见 [08-review-findings.md](08-review-findings.md)。S1 只是相对零点，实际方向和转子电角度偏移仍待标定；该角度函数当前未被开环控制调用。非法输入仍返回 0，不能仅凭角度值判断状态有效性。
+样例按 W/V/U 拼位，本工程按 U/V/W 拼位；换算后序列为 1→3→2→6→4→5，不能把原始编码直接当递增扇区号。S1 只是相对零点，实际方向和转子电角度偏移仍待标定；该角度函数当前未被开环控制调用。非法输入仍返回 0，不能仅凭角度值判断状态有效性。
 
 ## 4. 调试串口：bsp/uart + app/log
 
@@ -101,15 +101,7 @@ PC6/PC7/PC8 上拉输入，原始编码 U/V/W 分别位于 bit2/bit1/bit0。bsp_
 
 计时由 `app_log_task()` 在确认有队列工作后包裹回收与 DMA 提交；空队列和 DMA 忙时返回均归入 `poll`。提交失败的尝试仍属于工作，重试留给后续主循环。BSP 不依赖应用层性能统计。
 
-## 5. 应用与已知限制
-
-应用层按职责拆分：`app/app`（初始化、模式联锁、主循环、共享状态）、`app/cmd`（命令）、`app/control`（算法策略）、`app/log`（日志队列）、`app/perf`（性能统计）、`app/status`（状态打印）；每个子文件夹都提供 `*_task()`，由 `app_task()` 统一调度。
-
-串口命令：0 停机，1/2 为正反转请求（当前拒绝），h 霍尔监视，+/- 调整占空比，>/< 调整电频率，? 打印帮助。帮助分条入队，避免超过格式化缓冲区。
-
-六步表保持 U+V-、U+W-、V+W-、V+U-、W+U-、W+V-；只关当前悬空相，高相斩波、低相上管 0%。占空比范围 5%～60%，电频率 0.5～20 Hz。换相仍为毫秒级主循环调度，存在时间量化和任务抖动；尚无闭环、同步采样或软件限流。
-
-## 6. 六步策略与算法：app/control + algorithm/sixstep
+## 5. 六步策略与算法：app/control + algorithm/sixstep
 
 | 模块 | 职责 |
 |---|---|
@@ -127,4 +119,6 @@ app_task → app_control_task → alg_sixstep_next_step / alg_sixstep_apply
 
 算法层不 include 任何 BSP/应用头文件，因此可以脱离硬件做主机测试，也能被将来的 FOC 复用同一套回调机制。开桥联锁仍由 `app/control` 调用 `bsp_pwm_enable_bridge_sixstep()` 完成。
 
-硬件验证方法及本次软件验证结果见 [09-validation-and-maintenance.md](09-validation-and-maintenance.md)。
+构建与通用验证方法见 [09-validation-and-maintenance.md](09-validation-and-maintenance.md)。
+
+换相表：U+V− → U+W− → V+W− → V+U− → W+U− → W+V−；反向倒序。策略参数和操作命令仅在 [09](09-validation-and-maintenance.md) 维护。

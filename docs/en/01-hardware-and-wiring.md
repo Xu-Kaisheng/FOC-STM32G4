@@ -4,11 +4,10 @@
 
 The only controller is STM32G474RET6 on DevEBox Ver.20. The board schematic and DS12288 Rev 6 have been checked. Header numbers and photograph orientation are in the [G474 board guide](11-g474-board-guide.md).
 
-## 1. Topology and status
+## 1. Topology
 
 24 V supply → ATK-PD6010B → motor U/V/W. Motor Hall signals go to CN2; CN3 connects six PWM inputs, CTRL_SD, three phase-current outputs, VBUS, and Hall signals. Analog inputs are not isolated; MCU and driver board must share ground.
 
-Current firmware provides GPIO Hall polling, sequential ADC1/2/3 reads, ADC4 bus monitoring, and UART performance reports with the bridge disabled. The boot PWM demo has been tested and disabled. Current control, synchronized acquisition, and fast 8 A limiting are pending.
 
 ## 2. Driver-board circuits and scaling
 
@@ -28,7 +27,7 @@ Current firmware provides GPIO Hall polling, sequential ADC1/2/3 reads, ADC4 bus
 | CN3 pin 5 | JP1 1–2: ENCZ; 2–3: R_BREAK | §2.1.7 |
 | Encoder supply | JP2 1–2: 5 V (default); 2–3: 11 V | §2.1.9 |
 
-The driver-board analog supply and MCU VDDA use different regulators. Reference mismatch affects current gain and offset. ADC4 measures VREFINT for reference compensation; amplifier offset and gain require separate calibration.
+The driver-board analog supply and MCU VDDA use different regulators. Reference mismatch affects current gain and offset. See [bus/VREF](10-bus-voltage-adc.md) for compensation and its limits.
 
 ## 3. Motor: BL57H95 / 57BLY95-230-001
 
@@ -85,7 +84,7 @@ CN2 order is W/V/U/GND/VENC. Measure CN3-2/4/6 high levels before MCU connection
 | 17 / 18 | PWM_UH/UL | PA8/PB13 | TIM1_CH1/CH1N |
 | 19 / 20 | PWM_VH/VL | PA9/PB14 | TIM1_CH2/CH2N |
 | 21 / 22 | PWM_WH/WL | PA10/PB15 | TIM1_CH3/CH3N |
-| 24 | CTRL_SD | PC9 | Active high, initialized low, enable prohibited |
+| 24 | CTRL_SD | PC9 | Active high; initialized low at reset |
 | 7 / 16 | GND | GND | Connect both |
 | 15 | VTEMP | Unconfigured | Leave disconnected |
 | 23 | 5V_IN | **Do not connect** | Prevent backfeeding |
@@ -103,12 +102,7 @@ PB10 → USB–TTL RX; PB11 → USB–TTL TX; common ground. Driver CN3-8 is div
 | JP2 | 1–2 | Hall/encoder supply 5 V |
 | JP3 | 1–2 | CN3-2/4/6 Hall signals |
 
-## 5. Parameters and validation order
 
-HSI+PLL runs at 170 MHz. TIM1 is center-aligned at 20 kHz with PSC=0, ARR=4250, RCR=1. Clock divider 1 and DTG=149 give 1 µs dead time. ADC1/2/3/4 use 42.5 MHz, 12-bit, 247.5 sampling cycles, regular software triggering. Monitoring is every 500 ms with a 1 ms polling timeout argument. VBUS uses `raw×measured_VREF(V)×25/4095`, with VREFINT compensation, without voltage protection or divider-gain calibration. Future current/speed targets are 20 kHz / 1 kHz, or 8500 CPU cycles per current period.
+## 5. Related topics
 
-Check headers, grounds, and empty J3 first. Initially connect only debugger/UART. With the bridge off, check analog voltages: 24 V bus gives about 0.96 V; zero current about 1.25 V. Turn the motor by hand to inspect Hall states.
-
-On 2026-11-17 the user reported normal PWM and **990 ns dead time**. The demo is disabled; the 1 µs setting remains and PC9 stays low. A future recheck requires explicitly enabling a bridge-off test, inspecting each pair for a 50 µs period and about 1 µs both-low gap. Compilation and slow ADC reads do not validate loaded operation. Keep phase/Hall wiring fixed; 8 A limiting is pending. See [validation](09-validation-and-maintenance.md).
-
-The COM six-step interface maintains equal phase CCR duties and commits high-phase PWM1, low-phase forced inactive and the third phase disabled together. Bridge-off validation must cover all six outputs, forward/reverse commutation, constant low-side conduction, floating phase, dead time and carrier continuity. Earlier temporary PWM-demo results do not validate COM commutation. See the [PWM driver](06-driver-modules.md) for interface constraints.
+This page owns wiring, circuit facts and motor specifications. See [09](09-validation-and-maintenance.md) for operation, [04](04-cubemx-configuration.md) for generated configuration, [06](06-driver-modules.md) for module contracts, and [10](10-bus-voltage-adc.md) for bus/VREF conversion.

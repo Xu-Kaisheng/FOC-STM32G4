@@ -6,7 +6,7 @@
 
 Accounting lives in `src/app/perf/perf.c/.h` plus `perf_print.c`; DWT register access moved down to `src/bsp/time/cycle.h` (all `static inline`), which also removes the old `bsp/uart` self-timing dependency cycle; log pumping now lives in `app/log`. It uses Cortex-M DWT CYCCNT and reports from the main loop every 1000 ms. Conversion uses runtime `SystemCoreClock`, currently 170 MHz. Initialization at the end of `app_init()` excludes startup ADC calibration from runtime windows.
 
-There is no current loop. Slow ADC diagnostics are not current control. G474 disables power enable and boot self-test; the temporary PWM demo is finished and disabled. Both control categories normally report `OFF (no samples)`. A future unlocked six-step path would report actual `app_apply_step()` time.
+There is no current loop. Slow ADC diagnostics are not current control. Accounting starts after startup diagnostics. A control category reports `OFF (no samples)` when it has no calls, and execution times when active. Current capabilities and startup policy belong only to [09](09-validation-and-maintenance.md).
 
 | Field | Meaning |
 |---|---|
@@ -74,5 +74,3 @@ Future current control should bracket real computation and PWM-duty submission w
 2. Rebuild G474 with zero errors/warnings. Core interrupt hooks remain in USER CODE; the Keil project includes the module.
 3. With bridge off, check one-second PERF logs and CURRENT/SIXSTEP OFF. A mode transition's 200 ms wait increases busy in its window.
 4. Later compare GPIO markers and scope timing against maxima, measuring hook/critical-section overhead and real overrun behavior under load.
-
-Recorded 2026-11-16 software validation: ARMCC produced 0 errors/warnings (Code 28140, RO 1492, RW 104, ZI 4496 bytes); runtime/fault, G474, and performance suites passed. Non-USER-CODE interrupt regions and target compiler options were unchanged for that feature. No hardware performance measurements have been collected.

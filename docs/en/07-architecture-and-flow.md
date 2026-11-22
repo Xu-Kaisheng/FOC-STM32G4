@@ -1,77 +1,50 @@
-# 07 Architecture and execution flow
+# 07 Architecture and application flow
 
 **English** | [简体中文](../zh-CN/07-architecture-and-flow.md) | [Documentation index](../README.md)
 
-This describes current bridge-off diagnostics and the retained v0.1 six-step path. See [driver contracts](06-driver-modules.md) and [review findings](08-review-findings.md).
+This page owns responsibilities and call relationships. [AGENTS](../../AGENTS.md) owns development rules, [09](09-validation-and-maintenance.md) owns operation and drive permission, and [06](06-driver-modules.md) owns module contracts.
 
-## 1. Modules
-
-- Core: generated clock/GPIO/ADC/TIM1/USART3; USER CODE application calls and shutdown.
-- `app/app`: `app` (init, mode interlocks, main loop), `app_state` (mode, timestamps, hall, ADC availability).
-- `app/cmd`: `app_cmd_task()`: nonblocking command read and parsing.
-- `app/control`: algorithm strategy: six-step parameters, bench limits, BSP callback injection.
-- `app/log`: `app_log_task()`: log formatting, 512-byte queue and DMA pumping.
-- `app/status`: `app_status_task()`: periodic status output.
-- `algorithm/sixstep`: step table and progression, pure algorithm; hardware output via injected callbacks.
-- `algorithm/foc`, `third_party`: reserved.
-- `bsp/pwm`: outputs, duty, floating phases, mode-specific interlocks, CTRL_SD, emergency stop.
-- `adc_cur`: calibration, three sequential regular-group reads, complete-sample publication and failure return.
-- `adc_vbus`: ADC4 calibration/conversion/scaling; [bus-voltage guide](10-bus-voltage-adc.md).
-- `hall`: raw code, relative sector lookup, state text.
-- `bsp/uart`: USART3 hardware only: start one TX DMA transfer, query busy, nonblocking RX; **no queue, no task**.
-- `bsp/board`: board constants and time base; the only BSP module others may depend on.
-- `app/perf` + `bsp/time`: DWT control timing and effective work, reported each second; [performance guide](12-performance-monitoring.md).
-
-If the applications call down only: applications may use `algorithm`, `third_party` and `bsp`; `algorithm`/`third_party` never include app/bsp; `bsp` depends only on `bsp/board` and contains no `*_task()`. UART alone accesses its handle. There is no control ISR; ADCs are main-loop polled. G474 disables boot self-test and rejects bridge enable at application and driver layers.
-
-## 2. Startup
+## Layers
 
 ```text
-HAL_Init → clock → GPIO (SD low) → ADC/TIM1/USART3
-  → app_init
-      → app_log_init (512-byte log queue)
-      → bsp_pwm_init: bridge off, PWM stopped, duty cleared
-      → calibrate ADC1/2/3; lock start on failure
-      → calibrate ADC4, read VBUS; lock start on failure
-      → initialize Hall inputs
-      → skip disabled boot PWM self-test
-      → print startup state; initialize performance counters
-  → while (1): app_task
+src/app/             Orchestration, commands, control policy, status, logs, performance
+src/algorithm/       Pure algorithms with injected output callbacks, no HAL/app dependency
+src/bsp/             Board parameters and hardware primitives
+src/third_party/     External implementations
+Core/                Generated initialization; application/exception hooks in USER CODE
+Drivers/             Read-only HAL/CMSIS
 ```
 
-Any self-test requires SD=0. Configuration failure never authorizes bypassing checks. Initial mode is STOP.
+Dependencies flow from app to algorithm, BSP or third_party, never upward. BSP depends on its own interfaces and board, with the inline timebase exception; pwm.c orchestrates primitives within the PWM module. BSP contains no tasks.
 
-## 3. Main loop
+| Application module | Responsibility |
+|---|---|
+| app/app | Initialization, mode switching and main loop; app_state encapsulates shared state |
+| app/cmd | Nonblocking single-character command dispatch |
+| app/control | Policy parameters, step state and scheduling; BSP callback injection |
+| app/status | Slow acquisition and reporting |
+| app/log | Static queue and DMA progress |
+| app/perf | Work/IRQ/control accounting and main-loop reporting |
 
-```text
-app_task
-  → app_log_task()        background log TX (DMA)
-  → app_cmd_task()        nonblocking one-command read and parse
-  → app_control_task()    six-step advance at the step interval (algorithm + BSP callbacks)
-  → Hall monitor prints only on state change
-  → app_status_task()     every 500 ms read ADC4/ADC1-3 and print status
-  → app_perf_task()       once-per-second performance report
-```
+Use public functions across modules. ADC handles stay in BSP; algorithms do not access HAL. Keil groups are App, Algo and BSP, with matching include paths.
 
-Step interval is `floor(1000/(6×f_e))` ms; at most one step per iteration. This does not guarantee a real-time loop rate. Formatting, ADC polling, and scheduling still consume time despite nonblocking transmission.
+## Startup and scheduling
 
-## 4. Mode change and start
+`Core main → app_init → app_task`. Startup prepares UART and parameters, initializes PWM with the bridge off, calibrates current/bus ADCs, validates a bus read and initializes Hall input. Any optional waveform self-test keeps the bridge off. Performance initialization follows startup logging so calibration is outside normal accounting.
 
-A real transition lowers SD, stops PWM, then waits 200 ms. A command for the current mode returns unchanged. G474 rejects forward/reverse. The retained locked path checks ADC readiness, prepares equal duties, starts TIM1 with PWM1 modes and CCR values committed, checks all pairs, then calls `alg_sixstep_apply`. Its application-injected callback commits high-phase PWM1, low-phase forced inactive and the third phase disabled with one COM. The enable interlock checks the exact modes/pairs and equal nonzero CCRs, commits preloads, then enables SD. Any rejection stops PWM/bridge and returns STOP; SIXSTEP is reported only after success.
+The main loop advances log transmission, commands, control, mode-dependent Hall monitoring, status and performance reporting in that order. There is no control ISR; future interrupt control requires its own timing design.
 
-Three-phase check requires `0x555`; six-step requires the selected two-phase mask. Enabled channels are not simultaneously conducting MOSFETs; TIM1 generates complementary timing and dead time.
+## Mode transitions
 
-Running commutation changes output roles through COM without resetting the counter; duty updates use UEV to transfer a complete set. Submission failure immediately stops power/PWM and returns STOP. Output APIs require one main-loop writer; see the [PWM driver](06-driver-modules.md) for constraints and validation.
+Requests for the current mode do not restart it. A real transition disables the bridge/PWM and waits for latch reset. Startup checks board permission, ADC readiness and PWM interlocks; rejection returns STOP. Commands, delay and policy parameters belong to [09](09-validation-and-maintenance.md).
 
-## 5. Failures
+Six-step flow is `app_control_task → alg_sixstep_next_step / alg_sixstep_apply → injected BSP callbacks`. Algorithms choose phase roles, BSP commits them. COM/UEV semantics belong to [06](06-driver-modules.md).
 
-- ADC init failure locks startup; stop/Hall monitoring remain available.
-- ADC read failure stops power, latches lockout until reset, and reports failure instead of valid-looking zero current.
-- PWM interlock failure ensures SD=0 and STOP.
-- Fatal exception / `Error_Handler` clears MOE/AOE, outputs, and CEN, then halts without log or delay.
+## Failure boundaries
 
-ADC acquisition-failure handling is not the deferred 8 A current limiter.
+- ADC failure or stale samples disable power and latch startup lockout until reset/calibration. Old samples are not new measurements.
+- Failed output submission/interlock stops PWM/power and returns STOP.
+- Fatal exceptions invoke BSP emergency shutdown from Core USER CODE, without logging or delay dependencies.
+- Log and timing-source recovery do not automatically enable power. See [06](06-driver-modules.md) and [12](12-performance-monitoring.md).
 
-## 6. Invariants
-
-Enable only after the matching interlock; disable power first on stop/fatal error. Explicitly commit preload at start/enable; never trust stale CCRs. Floating a phase must leave TIM1 running. Software ordering cannot replace hardware dead time. Keep the 200 ms wait in the main loop after PWM stops, never in an ISR. Use only successful ADC samples; calibrate Hall direction/zero before feedback. Future 20 kHz control requires renewed trigger/update/deadline checks and no ISR blocking or logging.
+`tests/check_structure.sh` checks structure and naming. Build/regression/hardware procedures belong to [09](09-validation-and-maintenance.md).

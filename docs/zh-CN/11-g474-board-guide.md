@@ -2,11 +2,7 @@
 
 [English](../en/11-g474-board-guide.md) | **简体中文** | [文档目录](../README.md)
 
-## 当前交付范围
-
-仓库只保留 STM32G474RET6 / DevEBox Ver.20。根目录 `STM32-FOC.uvmpw` 只打开 `MDK-ARM/G474-FOC.uvprojx`，对应配置源为根目录的 `G474-FOC.ioc`。
-
-G4 工程能编译、具备串口/霍尔/三相模拟量/VBUS 的诊断代码，不代表已完成电机迁移。当前三个相电流 ADC **依次软件触发**，不是同一 PWM 事件同步采集，也没有电流闭环。板级使能与上电 PWM 自检接口均返回 0；临时开机 demo 已完成抓波测试并关闭。
+本页只维护 DevEBox Ver.20 的物理排针、板载网络与供电参考；CN2/CN3 接线以 [01](01-hardware-and-wiring.md) 为准，操作与构建见 [09](09-validation-and-maintenance.md)。
 
 ## 照片能证明什么
 
@@ -38,35 +34,9 @@ VDDA、VREF+、E_BAT 是电源/参考/备份域端子，不作为通用 GPIO。�
 
 PA13/PA14 用于顶部 SWD 的 DIO/CLK；PA11/PA12 对应原生 USB；PC14/PC15 对应低速晶振，这些接口保留。Flash、OLED/TFT、LED、K1/K2 的 GPIO 网络已按下表核实。显示屏 J3 不接外设。
 
-## 驱动板接线（原理图核验通过）
+## 驱动板接口
 
-下面所选引脚已在新增实物背面照上逐项找到，与现有 G4 工程分配一致，无需调整引脚或重新生成代码。以下 MCU 复用已对照 STM32G474 LQFP64 的 CubeMX 数据库、生成代码及 DS12288 Rev 6。**结论：当前引脚全部可保留，条件是 OLED/TFT 接口 J3 空置，不同时启用这些脚上的显示功能。** 这是图纸核验结果，不能替代实板通断与电压检查；后续用户反馈的 PWM 实测见下文。
-
-| ATK-PD6010B CN3 | 信号 | G474 引脚 | 外设 | 背面照片位置 |
-|---:|---|---|---|---|
-| 17 | PWM_UH | PA8 | TIM1_CH1 | 右 7 外 |
-| 18 | PWM_UL | PB13 | TIM1_CH1N | 右 4 内 |
-| 19 | PWM_VH | PA9 | TIM1_CH2 | 右 8 内 |
-| 20 | PWM_VL | PB14 | TIM1_CH2N | 右 4 外 |
-| 21 | PWM_WH | PA10 | TIM1_CH3 | 右 8 外 |
-| 22 | PWM_WL | PB15 | TIM1_CH3N | 右 5 内 |
-| 24 | CTRL_SD | PC9 | 推挽输出，默认低 | 右 7 内 |
-| 2 | HALL U | PC6 | 上拉输入 | 右 5 外 |
-| 4 | HALL V | PC7 | 上拉输入 | 右 6 内 |
-| 6 | HALL W | PC8 | 上拉输入 | 右 6 外 |
-| 10 | AMP_IU | PC0 | ADC1_IN6 | 左 13 内 |
-| 12 | AMP_IV | PC1 | ADC2_IN7 | 左 12 外 |
-| 14 | AMP_IW | PB1 | ADC3_IN1 | 左 5 外 |
-| 8 | VBUS | PB12 | ADC4_IN3 | 右 3 内 |
-| 7、16 | GND | GND | 两根均共地 | 任一已确认的 GND |
-| 15 | VTEMP | 本轮不接 | 尚未配置 | — |
-| 23 | 5V_IN | **禁止连接** | 避免反灌 | — |
-
-CN3 1/3/5（编码器）和 9/11/13（反电势）不接。接线以本表和排针丝印为准。
-
-调试串口为 USART3：PB10（背面左 4 内）→ USB-TTL RX，PB11（背面左 4 外）→ USB-TTL TX，GND 共地，115200 8N1、3.3 V 逻辑电平。Type-C 标注为 MCU 原生 USB，当前工程没有 USB CDC，不能把它当作已经可用的虚拟串口。
-
-四个 ADC 的分配给后续三相同步采集保留了独立资源；是否能在选定时钟、采样时间和 PWM 窗口内达到要求，需要继续核对触发矩阵并实测，当前不宣称零时差。
+驱动板到 MCU 的唯一接线表见 [01](01-hardware-and-wiring.md)。下文只给 MCU 引脚到开发板排针的物理定位，不重复 CN3 表。
 
 ## 板载网络核验（2026-11-16）
 
@@ -109,73 +79,6 @@ DS12288 Rev 6 的 Table 12（第 59、61、63 页）确认 PC0=ADC12_IN6、PC1=A
 
 由于 R11/R10 将 3V3 连到 VDDA/VREF+，ADC 参考会跟随供电。若实测供电是 3.0 V，若仍按固定 3.3 V 换算，则换算出的 ADC 输入电压约高 10%，相电流的偏置扣除也会受影响；现在由 ADC4 测 VREFINT 补偿；诊断时应与万用表核对 VREF+。模拟输入须处于实际 VREF+/VDDA 允许范围，不能按数字引脚的耐压能力判断 ADC 输入范围。
 
-## 工程组织
+## 资料入口
 
-```text
-STM32-FOC.uvmpw                  唯一 Keil 入口
-src/app/                        应用层：app/（模式、状态、调度）、cmd/、control/、log/、perf/、status/
-src/algorithm/                  纯算法：sixstep/、foc/
-src/third_party/                第三方库（预留）
-src/bsp/                        板级层：board/、pwm/、hall/、adc_cur/、adc_vbus/、uart/、time/
-G474-FOC.ioc                     唯一 CubeMX 配置
-Core/、Drivers/、MDK-ARM/         生成代码、原厂 SDK、Keil 工程
-```
-
-应用不直接包含 HAL 或访问 ADC 句柄；板级实现持有自己的句柄。重新生成工程时应核对 `src/app` 与 `src/bsp` 源码条目仍在，USER CODE 内的应用入口、异常关桥、性能统计钩子均保留。目录与依赖规则见 [13-repo-restructure.md](13-repo-restructure.md)。
-
-## G474 配置与限制
-
-2026-11-17 已完成的临时抓波固件：初始化完成后自动输出 10 秒三组同相的 20 kHz 互补 PWM，CCR 为 ARR 的 50%，硬件死区为 1 µs。PC9 全程保持低；结束时停止计数器、关闭 MOE 与六路通道、清零 CCR，然后进入串口诊断。自检期间只发送日志，不处理串口命令；无需发送 `1`，每次复位都会重新测试。用户反馈测试正常、死区实测 990 ns。现已关闭开机自检并撤销临时 10 秒时长，保留原有自检入口和 1 µs 硬件死区配置；当前固件每次复位均不输出测试 PWM。未收到波形文件、采样率或各通道逐项测量值，不将本次反馈扩展为功率级带载验证。
-
-以下为复测方法，当前固件需另行启用关桥自检：逻辑分析仪接 PA8/PB13、PA9/PB14、PA10/PB15 与 MCU GND，可加一路接 PC9 确认关桥；J3 保持空置。先开始采集再复位 MCU，建议采样率至少 20 MS/s、用 PA8 上升沿触发。检查周期约 50 µs、每对切换时约 1 µs 双低、没有双高重叠；死区会把每路高电平从理想的 25 µs 缩短到约 24 µs（理论约 48%），三组之间不应出现 120° 相移。可另用较低采样率做超过 10 秒的长记录验证自动停止。
-
-| 项目 | 当前值 |
-|---|---|
-| 时钟 | HSI 16 MHz / 4 × 85 / 2 = 170 MHz；未依赖照片中的 HSE |
-| TIM1 | 中心对齐模式 1，PSC=0，ARR=4250，RCR=1，20 kHz |
-| 硬件死区 | CKD=1，DTG=149；`(64+21)×2/170 MHz = 1 µs` |
-| PWM 输出策略 | 自动输出关闭；上电自检禁用；不允许开桥 |
-| 占空比限幅 | 共用 5%～92%；六步仍为原有 5%～60% 调试范围，G4 当前不能启动 |
-| ADC1/2/3/4 | 独立模式，12 位右对齐，规则组单通道、软件触发，247.5 周期 |
-| ADC 内核 | SYSCLK/4 = 42.5 MHz；单通道转换理论约 6.12 µs，不含软件开销 |
-| 状态监视 | 每 500 ms；三相依次读取，母线由独立 ADC4 读取 |
-| 温度、VREFINT | 温度未接入；ADC4 每轮 16 组平均估算参考电压 |
-| 控制环与保护 | 三 ADC 共同触发、同周期汇合、电流环及 8 A 软件限流均未实现 |
-
-G4 的 `app_board_drive_allowed()` 固定返回 0；`app_board_boot_test()` 在抓波完成后已恢复返回 0；应用在启动命令入口拒绝，PWM 驱动在真正拉高 SD 前再次拒绝。恢复驱动前，需要实物连线核对与波形验证，不能仅因“编译通过”解除限制。
-
-## 开发与核验顺序
-
-1. 原理图占用核验已完成。接线前断电核对实物丝印与排针方向，确认 J3 未插屏；对照上述 J4/J5 脚号核对连线，必要时测量通断以排除装配版本差异。
-2. 先只连调试器与串口，烧录诊断固件后应见 `G474RET6 DevEBox / MONITOR ONLY`。发送 `1`/`2` 应出现锁定提示，PC9 始终为低，TIM1 不自动输出。
-3. 功率级保持关断，确认驱动板霍尔输出电压符合 G4 输入要求，手转核对霍尔状态。模拟输入先测对地电压再连接；24 V 母线分压应约 0.96 V，零电流输出约 1.25 V。
-4. 固定接线和板级占用后，再安排关桥 PWM 波形验证、六路互补极性和死区测量；之后实施三 ADC 共同硬件触发、数据完整性与快速保护。
-5. 当前 2 Hz 顺序采样只用于接线诊断，不用于带载限流或证明三相同时采样。完整迁移验收沿用 docs/zh-CN/03-optimization-roadmap.md 的 G474 计划。
-
-2026-11-16 只完成图纸与芯片手册核验及文档同步，未修改固件引脚配置、未烧录、未实测电压/波形/ADC 偏差；开桥与上电 PWM 自检保持禁用。
-
-## 性能监视
-
-G474 已加入 DWT 性能统计，每秒输出有效工作时间/占比、空轮询时间及已接入的中断耗时。G474 当前仍是关桥诊断，六步换相与电流环没有实际执行时分别显示 `SIXSTEP=OFF`、`CURRENT=OFF`；详见 [12-performance-monitoring.md](12-performance-monitoring.md)。
-
-## 资料与构建
-
-- 正面产品图：`datasheet/STM32G474RET6/Snipaste_2026-11-15_15-44-29.png`。
-- 本文排针位置沿用用户此前提供的实物背面照；当前资料目录未找到原 JPG，脚号已用本次原理图交叉核对。
-- 开发板原理图：`datasheet/STM32G474RET6/STM32G474R开发板-原理图--202508.pdf`，3 页。
-- MCU 数据手册：同目录 `STM32G474R数据手册.pdf`，ST DS12288 Rev 6，236 页。
-- ADC 精度参考：同目录 `如何在STM32微控制器中获得最佳ADC精度.pdf`（AN2834），用于后续参考电压、接地与采样误差评估。
-- 引脚复用核对：CubeMX 设备描述 `STM32G474R(B-C-E)Tx.xml`，并交叉核对实际生成的 GPIO Alternate 和 ADC 通道；CubeMX 版本以 `.ioc` 元数据为准。
-- 原厂软件包：[STM32CubeG4](https://github.com/STMicroelectronics/STM32CubeG4)，具体版本以 `.ioc` 与工程内 SDK 元数据为准；SDK 只读。
-- Keil 编译器与设备包要求从 `.uvprojx` 读取，安装位置由 Agent 在当前机器查找。
-
-先按 [验证与维护](09-validation-and-maintenance.md) 定位 Keil 并设置当前终端的 `KEIL_UV4`，再在仓库根目录 Git Bash 执行：
-
-```bash
-: "${KEIL_UV4:=$(command -v UV4.exe || true)}"
-: "${KEIL_UV4:?Locate UV4.exe and set KEIL_UV4 for this shell first}"
-"$KEIL_UV4" -r "MDK-ARM/G474-FOC.uvprojx" -j0 -o "../build-g474.log"
-python -X utf8 tests/run_native.py
-```
-
-检查日志的 `0 Error(s)`。G4 固件输出在 `MDK-ARM/G474-FOC/`。
+原始开发板原理图、DS12288、RM0440 及驱动板手册保存在本地只读 `datasheet/`。具体固件配置以 `.ioc` 和源码为准，见 [生成配置](04-cubemx-configuration.md)。图纸核验不代表所有实物装配相同，接线前仍须核对排针丝印与方向。
