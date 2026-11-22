@@ -30,6 +30,13 @@ static inline uint32_t bsp_cycle_get_now(void)
     return DWT->CYCCNT;
 }
 
+/** @brief 检查跟踪与周期计数使能；TRCENA 关闭时不读取被门控的 DWT 寄存器。 */
+static inline uint8_t bsp_cycle_is_enabled(void)
+{
+    return (uint8_t)(((CoreDebug->DEMCR & CoreDebug_DEMCR_TRCENA_Msk) != 0u) &&
+                     ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0u));
+}
+
 /**
  * @brief  周期数换算为微秒
  * @param  cycles: 周期数

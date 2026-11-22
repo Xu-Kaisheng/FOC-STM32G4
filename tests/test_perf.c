@@ -161,6 +161,67 @@ static void test_invalid_window(void)
     assert(app_perf_get_snapshot(NULL) == 0u);
 }
 
+/** @brief 下载器清除任一使能位时，即使窗口已有计数，也必须丢弃并在下一窗口恢复。 */
+static void test_recovery(void)
+{
+    app_perf_snapshot_t snap;
+    for (uint32_t scenario = 0u; scenario < 2u; scenario++)
+    {
+        uint32_t mark;
+        uint32_t stopped;
+        (void)start_clock(0u);
+        mark = app_perf_begin_control();
+        test_dwt.CYCCNT += 100u;
+        app_perf_end_control(APP_PERF_SIXSTEP, mark);
+        stopped = test_dwt.CYCCNT;
+        if (scenario == 0u) { test_core_debug.DEMCR &= ~CoreDebug_DEMCR_TRCENA_Msk; }
+        else { test_dwt.CTRL &= ~DWT_CTRL_CYCCNTENA_Msk; }
+        snap.clock_hz = 123u;
+        assert(app_perf_get_snapshot(&snap) == 0u && snap.clock_hz == 123u);
+        s_tick = 1000u;
+        app_perf_task();
+        assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "CPU work=") == NULL);
+        assert((test_core_debug.DEMCR & CoreDebug_DEMCR_TRCENA_Msk) != 0u);
+        assert((test_dwt.CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0u);
+        assert(test_dwt.CYCCNT > stopped && test_primask == 0u);
+        test_dwt.CYCCNT += TEST_HZ;
+        s_tick += 1000u;
+        assert(app_perf_get_snapshot(&snap) == 1u && snap.elapsed_cycles == TEST_HZ);
+        assert(snap.work_cycles == 0u && snap.irq_cycles == 0u);
+        assert(snap.control[APP_PERF_SIXSTEP].count == 0u);
+    }
+}
+
+/** @brief 初始停表可以稍后恢复；真正无法计数时持续报不可用，不伪报零负载。 */
+static void test_retry(void)
+{
+    app_perf_snapshot_t snap;
+    (void)start_clock(0u);
+    test_dwt_running = 0u;
+    app_perf_init();
+    for (uint32_t i = 0u; i < 2u; i++)
+    {
+        s_log[0] = '\0';
+        s_tick += 1000u;
+        app_perf_task();
+        assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "CPU work=") == NULL);
+    }
+    test_dwt_running = 1u;
+    s_tick += 1000u;
+    app_perf_task();
+    test_dwt.CYCCNT += TEST_HZ;
+    s_tick += 1000u;
+    assert(app_perf_get_snapshot(&snap) == 1u && snap.elapsed_cycles == TEST_HZ);
+    // 就绪后突然停表，即使使能位仍在，也要重建窗口再统计。
+    s_tick += 1000u;
+    s_log[0] = '\0';
+    app_perf_task();
+    assert(strstr(s_log, "unavailable") != NULL && test_primask == 0u);
+    test_dwt.CYCCNT += TEST_HZ;
+    s_tick += 1000u;
+    assert(app_perf_get_snapshot(&snap) == 1u && snap.elapsed_cycles == TEST_HZ);
+}
+
 /** @brief 执行实际统计模块的边界与日志回归。 */
 int32_t main(void)
 {
@@ -168,6 +229,8 @@ int32_t main(void)
     test_control();
     test_reporting();
     test_invalid_window();
+    test_recovery();
+    test_retry();
     puts("PASS: CPU union/nested IRQ, wrap, control budget, reporting, unavailable clock");
     return 0;
 }

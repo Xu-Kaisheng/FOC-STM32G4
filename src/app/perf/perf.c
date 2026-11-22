@@ -105,7 +105,8 @@ uint8_t app_perf_get_snapshot(app_perf_snapshot_t *out)
     ms = HAL_GetTick();
     elapsed = now - s_window_start;
     // 长时间停顿或改频后丢弃窗口，避免多次回绕被显示为正常负载。
-    valid = (uint8_t)((s_ready != 0u) && (elapsed != 0u) &&
+    // 下载器退出可能清除跟踪使能；即使窗口前段有计数，也不能发布部分窗口。
+    valid = (uint8_t)((s_ready != 0u) && (bsp_cycle_is_enabled() != 0u) && (elapsed != 0u) &&
                      ((ms - s_window_ms) <= PERF_MAX_WINDOW_MS) &&
                      (bsp_cycle_get_hz() == s_clock_hz));
     if (s_work_depth != 0u) { s_work_cycles += now - s_work_start; s_work_start = now; }

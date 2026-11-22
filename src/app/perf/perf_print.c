@@ -51,6 +51,8 @@ void app_perf_task(void)
     }
     if (app_perf_get_snapshot(&sample) == 0u)
     {
+        // 仅在主循环重建计时与统计窗口，丢弃停表期间数据；下一秒再报告完整窗口。
+        app_perf_init();
         app_log_write("[PERF] unavailable (DWT/clock/window)\r\n");
         return;
     }

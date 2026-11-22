@@ -64,7 +64,7 @@ Future current control should bracket real computation and PWM-duty submission w
 - Short PRIMASK critical sections protect nested-depth/counter updates and snapshots, restoring previous mask state. Algorithms/formatting stay outside. Measure overhead and interrupt latency; this is not zero-intrusion instrumentation.
 - Exception entry/exit and hook boundaries are not fully counted. New uninstrumented handlers would be omitted. Fatal exceptions prioritize power shutdown, not reporting.
 - Unsigned subtraction handles one wrap. DWT wraps at ~25.26 s at 170 MHz; normal windows are ~1 s. Windows exceeding 10 s are discarded to avoid false results after multiple wraps.
-- Non-counting DWT, zero cycle windows, or clock changes report `[PERF] unavailable (DWT/clock/window)`, not a false 0%. Reinitialize after changing clocks. Debugger pauses, low-power intervals, or external DWT modifications invalidate timing conclusions.
+- Lost DWT trace/counter enables, a stopped counter, zero cycle windows, or clock changes report `[PERF] unavailable (DWT/clock/window)`, not a false 0%. The main loop then reinitializes timing and accounting, discards the affected window, and resumes reporting from a complete new window one second later. Persistent failures retry once per second; recovery never runs in an ISR or resets the shared CYCCNT. Debugger pauses, low-power intervals, or external DWT modifications invalidate timing conclusions.
 - Accounting does not alter clock/pins/triggers/PWM policy/protection thresholds, and cannot replace synchronized sampling or fast protection.
 
 ## Validation
