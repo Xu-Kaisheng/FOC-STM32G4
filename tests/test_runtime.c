@@ -38,6 +38,11 @@ static char s_tx_capture[1024];
 static uint32_t s_tx_length;
 static uint8_t s_tx_dma_busy;
 ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4;
+uint16_t test_vref_cal = 1650u;
+static uint32_t s_rank;
+static uint32_t s_reference_raw = 1500u;
+static HAL_StatusTypeDef s_reference_poll;
+static uint32_t s_reference_delay_ms;
 TIM_HandleTypeDef htim1;
 UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart3_tx;
@@ -79,6 +84,8 @@ static void reset_hardware(void)
     s_calibration = s_start = s_poll = s_stop = HAL_OK;
     s_vbus_calibration = s_vbus_start = s_vbus_poll = s_vbus_stop = HAL_OK;
     s_vbus_raw = 1192u;
+    s_reference_poll = HAL_OK;
+    s_reference_delay_ms = 0u;
     s_vbus_stop_calls = 0u;
     s_tick = 0u;
     s_rx = 0u;
@@ -180,14 +187,22 @@ HAL_StatusTypeDef HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *h, uint32_t mod
 }
 /** @brief 模拟规则组启动，保留应用层故障回归。 */
 HAL_StatusTypeDef HAL_ADC_Start(ADC_HandleTypeDef *h)
-{ return (h == &hadc4) ? s_vbus_start : s_start; }
+{ if (h == &hadc4) { s_rank = 0u; } return (h == &hadc4) ? s_vbus_start : s_start; }
 /** @brief 所有诊断 ADC 的主循环轮询均有 1 ms 超时参数。 */
 HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef *h, uint32_t timeout)
-{ assert(timeout == 1u); return (h == &hadc4) ? s_vbus_poll : s_poll; }
+{
+    assert(timeout == 1u);
+    if ((h == &hadc4) && (s_rank == 1u))
+    {
+        s_tick += s_reference_delay_ms;
+        if (s_reference_poll != HAL_OK) { return s_reference_poll; }
+    }
+    return (h == &hadc4) ? s_vbus_poll : s_poll;
+}
 /** @brief 提供三相测试码及独立母线测试码。 */
 uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef *h)
 {
-    if (h == &hadc4) { return s_vbus_raw; }
+    if (h == &hadc4) { return (s_rank++ == 0u) ? s_vbus_raw : s_reference_raw; }
     if (h == &hadc1) { return 1551u; }
     if (h == &hadc2) { return 1700u; }
     assert(h == &hadc3);
@@ -621,12 +636,32 @@ static void test_irq_accounting(void)
     assert(snapshot.elapsed_cycles == 90u && test_primask == 0u);
 }
 
+/** @brief 第二通道失败或采样过期时，实际应用必须关桥并锁住启动入口。 */
+static void test_reference_faults(void)
+{
+    for (uint32_t scenario = 0u; scenario < 2u; scenario++)
+    {
+        reset_hardware(); app_set_mode_raw(APP_MODE_STOP); app_init();
+        app_set_mode(APP_MODE_SIXSTEP_FWD);
+        assert(bsp_pwm_is_bridge_enabled() == 1u);
+        if (scenario == 0u) { s_reference_poll = HAL_TIMEOUT; }
+        else { s_reference_delay_ms = 21u; }
+        app_set_last_print_ms(s_tick);
+        s_tick += 1000u; app_task();
+        assert(app_get_adc_ready() == 0u && app_get_mode() == APP_MODE_STOP);
+        assert(bsp_pwm_is_bridge_enabled() == 0u);
+        s_reference_poll = HAL_OK; s_reference_delay_ms = 0u;
+        app_set_mode(APP_MODE_SIXSTEP_FWD);
+        assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
+    }
+}
+
 /** @brief 回归测试入口。 */
 int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
     test_task_accounting(); test_irq_accounting();
-    test_pwm_commutation(); test_pwm_com_interlocks();
+    test_pwm_commutation(); test_pwm_com_interlocks(); test_reference_faults();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }

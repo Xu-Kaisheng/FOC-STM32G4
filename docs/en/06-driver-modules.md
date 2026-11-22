@@ -51,11 +51,11 @@ NMI, HardFault, MemManage, BusFault, UsageFault, and `Error_Handler` lower SD, c
 | API | Contract |
 |---|---|
 | `bsp_adc_cur_init()` | Call with bridge off; platform owns handles; 1 success / 0 failure; remain off and reset after failure |
-| `bsp_adc_cur_read(out)` | 1 success; 0 leaves output unchanged, but the old sample must not be reused |
+| `bsp_adc_cur_read(out, vref_mv)` | 1 success; 0 leaves output unchanged, but the old sample must not be reused |
 
 Initialize by calibrating ADC1/2/3 sequentially; any failure leaves the driver unready. CubeMX selects PC0/IN6, PC1/IN7, PB1/IN1. For each ADC: software start → poll (1 ms timeout argument) → read → stop. Publish only after all three succeed; otherwise the application disables power and latches start lockout.
 
-Scaling is `I=(raw×3.3/4095−1.25)/0.12`. HAL calibration does not calibrate external amplifier offset; actual VDDA and per-phase zero remain to be measured. The 500 ms diagnostic acquisition is not synchronized to low-side conduction and is not reliable instantaneous feedback or fast protection. The 8 A limit is deferred pending synchronized sampling.
+Scaling is `I=(raw×measured_VREF(V)/4095−1.25)/0.12`, using the current ADC4 reference snapshot supplied by the application. HAL calibration does not calibrate external amplifier offset; per-phase zero remains to be measured. The 500 ms diagnostic acquisition is not synchronized to low-side conduction and is not reliable instantaneous feedback or fast protection. The 8 A limit is deferred pending synchronized sampling.
 
 ## 3. Hall inputs: bsp/hall
 

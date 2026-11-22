@@ -8,6 +8,9 @@
 
 static ADC_TypeDef s_instances[4];
 ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4;
+uint16_t test_vref_cal = 1650u;
+static uint32_t s_rank;
+static uint32_t s_reference_raw = 1500u;
 static uint32_t s_raw[4] = {1551u, 1700u, 1400u, 1192u};
 static uint32_t s_fail_index, s_failure, s_stops, s_seen;
 
@@ -31,12 +34,12 @@ HAL_StatusTypeDef HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *h, uint32_t mod
 { assert(mode == ADC_SINGLE_ENDED); return result(h, 1u); }
 /** @brief 记录各路启动，确认母线不混入电流组。 */
 HAL_StatusTypeDef HAL_ADC_Start(ADC_HandleTypeDef *h)
-{ s_seen |= 1u << adc_index(h); return result(h, 2u); }
+{ s_seen |= 1u << adc_index(h); if (h == &hadc4) { s_rank = 0u; } return result(h, 2u); }
 /** @brief 保证只允许低频、有界主循环轮询。 */
 HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef *h, uint32_t timeout)
 { assert(timeout == 1u); return result(h, 3u); }
 /** @brief 返回各路独立测试码。 */
-uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef *h) { return s_raw[adc_index(h)]; }
+uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef *h) { if ((h == &hadc4) && (s_rank++ != 0u)) { return s_reference_raw; } return s_raw[adc_index(h)]; }
 /** @brief 记录失败后的转换清理。 */
 HAL_StatusTypeDef HAL_ADC_Stop(ADC_HandleTypeDef *h)
 { s_stops++; return result(h, 4u); }
@@ -53,22 +56,43 @@ int32_t main(void)
     adc_vbus_sample_t bus = {0};
     hadc1.Instance = &s_instances[0]; hadc2.Instance = &s_instances[1];
     hadc3.Instance = &s_instances[2]; hadc4.Instance = &s_instances[3];
-    assert(bsp_adc_cur_read(&cur) == 0u && bsp_adc_vbus_read(&bus) == 0u);
+    assert(bsp_adc_cur_read(&cur, 3300u) == 0u && bsp_adc_vbus_read(&bus) == 0u);
     assert(bsp_adc_cur_init() == 1u && bsp_adc_vbus_init() == 1u);
-    assert(bsp_adc_cur_read(NULL) == 0u && bsp_adc_vbus_read(NULL) == 0u);
-    assert(bsp_adc_cur_read(&cur) == 1u && s_seen == 7u);
+    assert(bsp_adc_cur_read(NULL, 3300u) == 0u && bsp_adc_vbus_read(NULL) == 0u);
+    assert(bsp_adc_cur_read(&cur, 3300u) == 1u && s_seen == 7u);
     assert(cur.raw[0] == 1551u && cur.iv > 0.0f && cur.iw < 0.0f);
     s_seen = 0u;
     assert(bsp_adc_vbus_read(&bus) == 1u && s_seen == 8u);
-    assert(bus.raw == 1192u && bus.voltage > 24.0f && bus.voltage < 24.02f);
+    assert(bus.raw == 1192u && bus.voltage > 24.0f && bus.voltage < 24.03f);
     s_raw[3] = 0u;
     assert(bsp_adc_vbus_read(&bus) == 1u && bus.voltage == 0.0f);
     s_raw[3] = 4095u;
-    assert(bsp_adc_vbus_read(&bus) == 1u && bus.voltage > 82.47f && bus.voltage < 82.5f);
+    assert(bsp_adc_vbus_read(&bus) == 1u && bus.voltage > 82.47f && bus.voltage <= 82.5f);
     s_raw[3] = 4096u;
     assert(bsp_adc_vbus_read(&bus) == 0u && bus.raw == 4095u);
     s_raw[3] = 1192u;
     assert(bsp_adc_vbus_read(&bus) == 1u);
+    assert(bus.vref_mv == 3300u);
+    s_reference_raw = 1464u;
+    assert(bsp_adc_vbus_read(&bus) == 1u && bus.vref_mv == 3381u);
+    s_raw[0] = 1514u;
+    assert(bsp_adc_cur_read(&cur, bus.vref_mv) == 1u);
+    assert(cur.iu > -0.01f && cur.iu < 0.01f);
+    assert(bsp_adc_cur_read(&cur, 0u) == 0u);
+    assert(bsp_adc_cur_read(&cur, 3601u) == 0u);
+    s_reference_raw = 0u;
+    assert(bsp_adc_vbus_read(&bus) == 0u && bus.vref_mv == 3381u);
+    s_reference_raw = 4096u;
+    assert(bsp_adc_vbus_read(&bus) == 0u);
+    s_reference_raw = 1000u;
+    assert(bsp_adc_vbus_read(&bus) == 0u);
+    s_reference_raw = 1500u;
+    test_vref_cal = 0u;
+    assert(bsp_adc_vbus_init() == 0u);
+    test_vref_cal = 0xffffu;
+    assert(bsp_adc_vbus_init() == 0u);
+    test_vref_cal = 1650u;
+    assert(bsp_adc_vbus_init() == 1u);
     previous = cur;
     for (uint32_t i = 0u; i < 3u; i++)
     {
@@ -76,16 +100,16 @@ int32_t main(void)
         for (uint32_t stage = 2u; stage <= 4u; stage++)
         {
             s_failure = stage; s_stops = 0u;
-            assert(bsp_adc_cur_read(&cur) == 0u);
+            assert(bsp_adc_cur_read(&cur, 3300u) == 0u);
             assert(cur.iu == previous.iu && cur.iv == previous.iv && cur.iw == previous.iw);
             assert(cur.raw[0] == previous.raw[0] && cur.raw[1] == previous.raw[1] && cur.raw[2] == previous.raw[2]);
             if (stage == 3u) { assert(s_stops == i + 1u); }
         }
         s_failure = 1u;
-        assert(bsp_adc_cur_init() == 0u && bsp_adc_cur_read(&cur) == 0u);
+        assert(bsp_adc_cur_init() == 0u && bsp_adc_cur_read(&cur, 3300u) == 0u);
         s_failure = 0u; assert(bsp_adc_cur_init() == 1u);
     }
-    s_raw[2] = 4096u; assert(bsp_adc_cur_read(&cur) == 0u && cur.iw == previous.iw);
+    s_raw[2] = 4096u; assert(bsp_adc_cur_read(&cur, 3300u) == 0u && cur.iw == previous.iw);
     s_fail_index = 3u;
     for (uint32_t stage = 2u; stage <= 4u; stage++)
     {

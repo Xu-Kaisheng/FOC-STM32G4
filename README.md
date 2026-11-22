@@ -52,7 +52,7 @@ Edit generated code only inside USER CODE regions. Change peripheral configurati
 | Six-step output | Equal phase CCR duties; PWM1 / forced inactive / disabled outputs committed together by COM; bridge remains locked |
 | Dead time | DTG=149, clock divider 1, 1 µs |
 | Phase current | ADC1/2/3 independent regular groups, sequential software triggers; not synchronized |
-| VBUS | ADC4_IN3, PB12; `raw × 3.3 × 25 / 4096`; monitoring only |
+| VBUS | ADC4_IN3, PB12; `raw × measured_VREF(V) × 25 / 4095`; monitoring only |
 | ADC | 42.5 MHz kernel, 12-bit, 247.5 sampling cycles, 1 ms polling timeout argument |
 | Duty limits | PWM API 5%–92%; six-step tuning 5%–60%, drive currently locked |
 | Control targets | Current loop 20 kHz, speed loop 1 kHz; neither implemented; 8500 CPU cycles per 50 µs |

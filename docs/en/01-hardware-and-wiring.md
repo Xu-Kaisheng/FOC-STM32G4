@@ -28,7 +28,7 @@ Current firmware provides GPIO Hall polling, sequential ADC1/2/3 reads, ADC4 bus
 | CN3 pin 5 | JP1 1–2: ENCZ; 2–3: R_BREAK | §2.1.7 |
 | Encoder supply | JP2 1–2: 5 V (default); 2–3: 11 V | §2.1.9 |
 
-The driver-board analog supply and MCU VDDA use different regulators. Reference mismatch affects current gain and offset. VREFINT-based VDDA calibration is planned; scaling still assumes 3.3 V.
+The driver-board analog supply and MCU VDDA use different regulators. Reference mismatch affects current gain and offset. ADC4 measures VREFINT for reference compensation; amplifier offset and gain require separate calibration.
 
 ## 3. Motor: BL57H95 / 57BLY95-230-001
 
@@ -105,7 +105,7 @@ PB10 → USB–TTL RX; PB11 → USB–TTL TX; common ground. Driver CN3-8 is div
 
 ## 5. Parameters and validation order
 
-HSI+PLL runs at 170 MHz. TIM1 is center-aligned at 20 kHz with PSC=0, ARR=4250, RCR=1. Clock divider 1 and DTG=149 give 1 µs dead time. ADC1/2/3/4 use 42.5 MHz, 12-bit, 247.5 sampling cycles, regular software triggering. Monitoring is every 500 ms with a 1 ms polling timeout argument. VBUS uses `raw×3.3×25/4096`, without voltage protection or reference calibration. Future current/speed targets are 20 kHz / 1 kHz, or 8500 CPU cycles per current period.
+HSI+PLL runs at 170 MHz. TIM1 is center-aligned at 20 kHz with PSC=0, ARR=4250, RCR=1. Clock divider 1 and DTG=149 give 1 µs dead time. ADC1/2/3/4 use 42.5 MHz, 12-bit, 247.5 sampling cycles, regular software triggering. Monitoring is every 500 ms with a 1 ms polling timeout argument. VBUS uses `raw×measured_VREF(V)×25/4095`, with VREFINT compensation, without voltage protection or divider-gain calibration. Future current/speed targets are 20 kHz / 1 kHz, or 8500 CPU cycles per current period.
 
 Check headers, grounds, and empty J3 first. Initially connect only debugger/UART. With the bridge off, check analog voltages: 24 V bus gives about 0.96 V; zero current about 1.25 V. Turn the motor by hand to inspect Hall states.
 

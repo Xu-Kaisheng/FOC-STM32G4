@@ -55,13 +55,13 @@ NMI、HardFault、MemManage、BusFault、UsageFault 及 Error_Handler 在死循�
 | 接口 | 返回值与约束 |
 |---|---|
 | `uint8_t bsp_adc_cur_init(void)` | 关桥时调用，句柄由平台管理；1 成功，0 失败，失败后保持关桥并复位重试 |
-| `uint8_t bsp_adc_cur_read(adc_cur_sample_t *out)` | 1 成功；0 失败且 out 保持原值，不得使用旧样本 |
+| `uint8_t bsp_adc_cur_read(adc_cur_sample_t *out, uint16_t vref_mv)` | 1 成功；0 失败且 out 保持原值，不得使用旧样本 |
 
 初始化：依次校准 ADC1/ADC2/ADC3，任一路失败保持未就绪。通道由 CubeMX 生成，分别为 PC0/IN6、PC1/IN7、PB1/IN1。
 
 读取：依次软件启动每个 ADC 的规则组 → 轮询完成（超时参数 1 ms）→ 读取单通道结果 → 停止转换。仅三路全部成功才发布完整样本；任何失败不覆盖调用者的输出，应用关桥并锁住启动入口。
 
-换算保持 `I=(raw×3.3/4095−1.25)/0.12`。HAL 自校准只校准 ADC 自身，不等于测量驱动板放大器零漂；真实 VDDA 和每相零偏仍待标定。
+换算使用 `I=(raw×VREF实测值(V)/4095−1.25)/0.12`；参考值由应用从 ADC4 本轮采样传入。HAL 自校准只校准 ADC 自身，不等于测量驱动板放大器零漂；每相零偏仍待标定。
 
 v0.1 每 500 ms 软件采样仅用于状态监视，未与下管采样窗口同步，不能当作可靠的瞬时相电流或快速过流保护。8 A 软件限流按维护者要求暂缓，后续需先完善同步采样。
 

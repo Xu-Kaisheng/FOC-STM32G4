@@ -17,8 +17,6 @@
 /* ---------------- 公共宏 ---------------- */
 
 /* 换算常数 */
-#define ADC_CUR_VREF        3.3f             /* VDDA，后续用 VREFINT 校准 */
-#define ADC_CUR_FULL_SCALE  4095.0f
 #define ADC_CUR_OFFSET_V    1.25f            /* 0 A 对应的电压 */
 #define ADC_CUR_GAIN_V_PER_A 0.12f           /* 1 A 产生的电压 */
 
@@ -46,9 +44,10 @@ uint8_t bsp_adc_cur_init(void);
 /**
  * @brief  阻塞式读取一次三相电流（软件触发；时序由平台实现决定）
  * @param  out: 输出结构体
+ * @param  vref_mv: 本轮有效 VREF+，单位 mV
  * @retval 1 成功；0 失败，out 保持原值，不能当作有效电流使用
  * @note   v0.1 专用；v0.2 换成 TIM1 触发的注入中断，避免占用主循环
  */
-uint8_t bsp_adc_cur_read(adc_cur_sample_t *out);
+uint8_t bsp_adc_cur_read(adc_cur_sample_t *out, uint16_t vref_mv);
 
 #endif /* ADC_CUR_H */

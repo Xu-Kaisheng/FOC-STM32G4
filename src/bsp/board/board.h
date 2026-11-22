@@ -12,6 +12,12 @@
 
 #include <stdint.h>
 
+/* 12 位 ADC 统一换算；参考电压范围针对本板 3.3 V 电源的诊断容差。 */
+#define BOARD_ADC_FULL_SCALE 4095.0f
+#define BOARD_ADC_VREF_MIN_MV 2700u
+#define BOARD_ADC_VREF_MAX_MV 3600u
+#define BOARD_MV_PER_V 1000.0f
+
 /* ---------------- read ---------------- */
 
 /**

@@ -107,7 +107,7 @@ The user confirmed their J-Link 3V terminal is a power output. For standalone bo
 
 3V3 is directly connected to U2 RT9193-33GB output; no isolation is shown. External 3V3 also biases that regulator output. Reverse-feed tolerance has not been confirmed from its datasheet, so the schematic does not establish every supply combination as safe. Board power must not supply the motor power stage.
 
-R11/R10 connect the rail to VDDA/VREF+. If actual supply is 3.0 V while scaling assumes 3.3 V, inferred ADC input voltage is about 10% high, and current-offset subtraction is affected. Record measured VREF+ and calibrate later. Analog range follows actual VDDA/VREF+, not digital-pin voltage-tolerance rules.
+R11/R10 connect the rail to VDDA/VREF+. If actual supply is 3.0 V while scaling assumes 3.3 V, inferred ADC input voltage is about 10% high, and current-offset subtraction is affected. ADC4 now measures VREFINT for compensation; compare its VREF+ result with a meter. Analog range follows actual VDDA/VREF+, not digital-pin voltage-tolerance rules.
 
 ## Project organization
 
@@ -139,7 +139,7 @@ To repeat later, explicitly enable a bridge-off self-test. Connect PA8/PB13, PA9
 | ADC1–4 | Independent, 12-bit right-aligned, one regular software-triggered channel each, 247.5 sampling cycles |
 | ADC kernel | 42.5 MHz; ~6.12 µs theoretical single conversion, excluding software |
 | Monitoring | 500 ms; sequential phase reads and independent ADC4 |
-| Temperature/VREFINT | Not implemented; fixed 3.3 V scaling |
+| Temperature/VREFINT | Temperature pending; ADC4 averages 16 pairs to estimate VREF+ |
 | Control/protection | Common trigger, same-cycle aggregation, current loop, 8 A limit pending |
 
 `app_board_drive_allowed()` and `app_board_boot_test()` return 0. Application command handling and the PWM driver independently reject power enable. Do not remove this policy based on compilation alone.

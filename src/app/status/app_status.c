@@ -14,6 +14,7 @@
 #include "perf.h"
 
 #define APP_PRINT_PERIOD_MS 500u
+#define APP_SAMPLE_MAX_AGE_MS 20u
 #define APP_PERCENT_SCALE   100.0f
 
 /* ---------------- internal ---------------- */
@@ -40,7 +41,8 @@ static void print_status(void)
         app_log_write("[FATAL] VBUS ADC read failed, reset required\r\n");
         return;
     }
-    if (bsp_adc_cur_read(&cur) == 0u)
+    if ((bsp_adc_cur_read(&cur, vbus.vref_mv) == 0u) ||
+        ((bsp_board_get_millis() - vbus.sampled_ms) > APP_SAMPLE_MAX_AGE_MS))
     {
         // 采样链路失效必须先关桥；锁存到复位，禁止把零值误报为正常电流。
         app_set_adc_ready(0u);
@@ -56,7 +58,8 @@ static void print_status(void)
                     (double)cur.iu, (double)cur.iv, (double)cur.iw,
                     cur.raw[0], cur.raw[1], cur.raw[2]);
     // 独立一行，避免超过串口单条日志的 127 字节上限。
-    app_log_write("VBUS=%.2f V | raw=%4u\r\n", (double)vbus.voltage, vbus.raw);
+    app_log_write("VBUS=%.2f V | raw=%4u | VREF=%u mV\r\n",
+                  (double)vbus.voltage, vbus.raw, vbus.vref_mv);
 }
 
 /* ---------------- task ---------------- */

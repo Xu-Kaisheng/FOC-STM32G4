@@ -3,6 +3,7 @@
  */
 #include "adc_cur.h"
 #include "adc.h"
+#include "board.h"
 
 #define ADC_PHASE_COUNT       3u
 #define ADC_DIAG_TIMEOUT_MS   1u
@@ -31,10 +32,12 @@ uint8_t bsp_adc_cur_init(void)
 /* ---------------- read ---------------- */
 
 /** @brief 依次读取三个独立 ADC，仅用于关桥诊断，不声称三相同时采样。 */
-uint8_t bsp_adc_cur_read(adc_cur_sample_t *out)
+uint8_t bsp_adc_cur_read(adc_cur_sample_t *out, uint16_t vref_mv)
 {
     adc_cur_sample_t sample = {0};
-    if ((s_ready == 0u) || (out == NULL))
+    float volts_per_count = (float)vref_mv / (BOARD_MV_PER_V * BOARD_ADC_FULL_SCALE);
+    if ((s_ready == 0u) || (out == NULL) ||
+        (vref_mv < BOARD_ADC_VREF_MIN_MV) || (vref_mv > BOARD_ADC_VREF_MAX_MV))
     {
         return 0u;
     }
@@ -61,10 +64,10 @@ uint8_t bsp_adc_cur_read(adc_cur_sample_t *out)
         }
         sample.raw[i] = (uint16_t)raw;
     }
-    // 按驱动板采样链路换算，便于核对接线；零偏与 VDDA 尚待板上标定。
-    sample.iu = ((float)sample.raw[0] * ADC_CUR_VREF / ADC_CUR_FULL_SCALE - ADC_CUR_OFFSET_V) / ADC_CUR_GAIN_V_PER_A;
-    sample.iv = ((float)sample.raw[1] * ADC_CUR_VREF / ADC_CUR_FULL_SCALE - ADC_CUR_OFFSET_V) / ADC_CUR_GAIN_V_PER_A;
-    sample.iw = ((float)sample.raw[2] * ADC_CUR_VREF / ADC_CUR_FULL_SCALE - ADC_CUR_OFFSET_V) / ADC_CUR_GAIN_V_PER_A;
+    // 按驱动板采样链路换算，便于核对接线；参考电压使用本轮实测值，零偏仍需单独标定。
+    sample.iu = ((float)sample.raw[0] * volts_per_count - ADC_CUR_OFFSET_V) / ADC_CUR_GAIN_V_PER_A;
+    sample.iv = ((float)sample.raw[1] * volts_per_count - ADC_CUR_OFFSET_V) / ADC_CUR_GAIN_V_PER_A;
+    sample.iw = ((float)sample.raw[2] * volts_per_count - ADC_CUR_OFFSET_V) / ADC_CUR_GAIN_V_PER_A;
     *out = sample;
     return 1u;
 }

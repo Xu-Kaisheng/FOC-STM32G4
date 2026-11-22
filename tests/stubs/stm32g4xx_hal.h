@@ -77,6 +77,10 @@ extern TIM_TypeDef test_tim1;
 #define __HAL_TIM_DISABLE(h) ((h)->Instance->CR1 &= ~TIM_CR1_CEN)
 #define __HAL_TIM_SET_COMPARE(h,c,v) test_set_compare((h),(c),(v))
 #define __DSB() ((void)0)
+extern uint16_t test_vref_cal;
+#define VREFINT_CAL_ADDR (&test_vref_cal)
+#define ADC_RESOLUTION_12B 0u
+#define __HAL_ADC_CALC_VREFANALOG_VOLTAGE(raw, resolution) ((uint32_t)test_vref_cal * 3000u / (raw))
 #define ADC_SINGLE_ENDED 0x7fu
 #define DISABLE 0u
 #define RESET 0u
