@@ -12,6 +12,7 @@
 #define CURRENT_REFERENCE_MAX_A  1.0f
 #define CURRENT_TRIP_A           8.0f
 #define CURRENT_SUM_MAX_A        1.0f
+#define CURRENT_SUM_TRIP_SAMPLES 3u
 #define CURRENT_RAMP_A_PER_TICK  0.0001f
 #define CURRENT_BUS_MAX_AGE_MS   20u
 #define CURRENT_DEADLINE_US      20u
@@ -26,6 +27,7 @@ static volatile uint32_t s_bus_ms, s_completed, s_feedback_sequence;
 static volatile uint8_t s_enabled, s_running;
 static volatile app_control_feedback_t s_feedback;
 static uint32_t s_last_completed;
+static uint8_t s_sum_errors;
 static float s_reference_d, s_reference_q, s_angle, s_sin, s_cos = 1.0f;
 
 /* ---------------- internal ---------------- */
@@ -72,14 +74,23 @@ static void run_current(uint32_t started)
     }
     if (fabsf(phase.iu + phase.iv + phase.iw) > CURRENT_SUM_MAX_A)
     {
-        app_control_trip_fault(APP_FAULT_ADC);
-        return;
+        // 三相共模尖峰不等于相电流过流；连续 150 us 异常才判采样链路失真。
+        s_sum_errors++;
+        if (s_sum_errors >= CURRENT_SUM_TRIP_SAMPLES)
+        {
+            app_control_trip_fault(APP_FAULT_CURRENT_SUM);
+            return;
+        }
     }
+    else { s_sum_errors = 0u; }
     if (s_running == 0u)
     {
         // 已连续确认关桥零偏，PWM 仍为中性占空比，开桥不重置计数器。
         if (bsp_pwm_enable_bridge(1u) == 0u) { app_control_trip_fault(APP_FAULT_PWM); return; }
         s_running = 1u;
+        // 本拍保持中性 PWM，下一拍再调流，避免标定收尾、开桥与 PI 叠加超时。
+        s_completed++;
+        return;
     }
     s_reference_d = ramp_reference(s_reference_d, s_target_d);
     s_reference_q = ramp_reference(s_reference_q, s_target_q);
@@ -138,6 +149,7 @@ void app_control_reset_current(void)
 {
     s_enabled = 0u;
     s_running = 0u;
+    s_sum_errors = 0u;
     s_reference_d = s_reference_q = 0.0f;
     s_completed = s_last_completed = 0u;
     s_feedback_sequence = 0u;

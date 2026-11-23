@@ -8,6 +8,7 @@
 #define ADC_PHASE_COUNT          3u
 #define ADC_RAW_MAX              4095u
 #define ADC_ZERO_SAMPLES         128u
+#define ADC_ZERO_MAX_ATTEMPTS    2048u
 #define ADC_ZERO_RECIPROCAL      (1.0f / 128.0f)
 #define ADC_ZERO_MIN_V           1.0f
 #define ADC_ZERO_MAX_V           1.5f
@@ -16,9 +17,23 @@
 
 static ADC_HandleTypeDef *const s_adcs[ADC_PHASE_COUNT] = { &hadc1, &hadc2, &hadc3 };
 static uint8_t s_ready, s_sampling;
-static uint32_t s_zero_count, s_sum[ADC_PHASE_COUNT];
+static uint32_t s_zero_count, s_zero_attempts, s_sum[ADC_PHASE_COUNT];
 static uint16_t s_min[ADC_PHASE_COUNT], s_max[ADC_PHASE_COUNT];
 static float s_offset[ADC_PHASE_COUNT], s_amp_per_count, s_volts_per_count;
+
+/* ---------------- internal ---------------- */
+
+/** @brief 偶发尖峰只废弃当前标定窗口，重新收集完整的三相稳定样本。 */
+static void reset_zero_window(void)
+{
+    s_zero_count = 0u;
+    for (uint32_t i = 0u; i < ADC_PHASE_COUNT; i++)
+    {
+        s_sum[i] = 0u;
+        s_min[i] = ADC_RAW_MAX;
+        s_max[i] = 0u;
+    }
+}
 
 /* ---------------- init ---------------- */
 
@@ -60,6 +75,9 @@ uint8_t bsp_adc_cur_read(adc_cur_sample_t *out)
     if ((valid == 0u) || (out == NULL)) { return 0u; }
     if (s_zero_count < ADC_ZERO_SAMPLES)
     {
+        uint8_t stable = 1u;
+        // 最多等待 102.4 ms；持续噪声仍锁存失败，不允许带着不可靠零偏开桥。
+        s_zero_attempts++;
         for (uint32_t i = 0u; i < ADC_PHASE_COUNT; i++)
         {
             float voltage = (float)sample.raw[i] * s_volts_per_count;
@@ -67,9 +85,14 @@ uint8_t bsp_adc_cur_read(adc_cur_sample_t *out)
             s_sum[i] += sample.raw[i];
             if (sample.raw[i] < s_min[i]) { s_min[i] = sample.raw[i]; }
             if (sample.raw[i] > s_max[i]) { s_max[i] = sample.raw[i]; }
-            if ((uint32_t)(s_max[i] - s_min[i]) > ADC_ZERO_MAX_SPREAD) { return 0u; }
+            if ((uint32_t)(s_max[i] - s_min[i]) > ADC_ZERO_MAX_SPREAD) { stable = 0u; }
         }
-        s_zero_count++;
+        if (stable == 0u) { reset_zero_window(); }
+        else { s_zero_count++; }
+        if ((s_zero_attempts >= ADC_ZERO_MAX_ATTEMPTS) && (s_zero_count < ADC_ZERO_SAMPLES))
+        {
+            return 0u;
+        }
         if (s_zero_count == ADC_ZERO_SAMPLES)
         {
             for (uint32_t i = 0u; i < ADC_PHASE_COUNT; i++)
@@ -101,14 +124,12 @@ uint8_t bsp_adc_cur_start(uint16_t vref_mv)
     {
         return 0u;
     }
-    s_zero_count = 0u;
+    reset_zero_window();
+    s_zero_attempts = 0u;
     s_volts_per_count = (float)vref_mv * (1.0f / (BOARD_MV_PER_V * BOARD_ADC_FULL_SCALE));
-    s_amp_per_count = (float)vref_mv * ADC_CURRENT_SCALE;
+    s_amp_per_count = (float)vref_mv * ADC_CURRENT_SCALE * BOARD_PHASE_CURRENT_SIGN;
     for (uint32_t i = 0u; i < ADC_PHASE_COUNT; i++)
     {
-        s_sum[i] = 0u;
-        s_min[i] = ADC_RAW_MAX;
-        s_max[i] = 0u;
         s_offset[i] = 0.0f;
     }
     if ((HAL_ADCEx_InjectedStart(&hadc1) != HAL_OK) ||

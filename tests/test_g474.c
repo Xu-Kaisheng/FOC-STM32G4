@@ -81,8 +81,9 @@ static void test_current(void)
     }
     assert(cur.iu == 0.0f && cur.iv == 0.0f && cur.iw == 0.0f);
     inject(1699u, 1485u, 1466u);
-    assert(bsp_adc_cur_read(&cur) == 1u && cur.iu > 0.99f && cur.iu < 1.01f);
-    assert(cur.iv < -0.49f && cur.iv > -0.51f);
+    // 下桥臂采样正向与电机相电流相反，raw 上升必须得到负相电流。
+    assert(bsp_adc_cur_read(&cur) == 1u && cur.iu < -0.99f && cur.iu > -1.01f);
+    assert(cur.iv > 0.49f && cur.iv < 0.51f);
     previous = cur;
     assert(bsp_adc_cur_read(&cur) == 0u && cur.iu == previous.iu);
     for (uint32_t i = 0u; i < 3u; i++)
@@ -101,7 +102,24 @@ static void test_current(void)
     assert(bsp_adc_cur_stop() == 1u);
     assert(bsp_adc_cur_start(3300u) == 1u);
     inject(1550u, 1560u, 1540u); assert(bsp_adc_cur_read(&cur) == 1u);
-    inject(1650u, 1560u, 1540u); assert(bsp_adc_cur_read(&cur) == 0u);
+    inject(1650u, 1560u, 1540u); assert(bsp_adc_cur_read(&cur) == 1u);
+    assert(bsp_adc_cur_is_calibrated() == 0u);
+    for (uint32_t i = 0u; i < 128u; i++)
+    {
+        inject(1550u, 1560u, 1540u);
+        assert(bsp_adc_cur_read(&cur) == 1u);
+        assert(bsp_adc_cur_is_calibrated() == (i == 127u));
+    }
+    assert(cur.iu == 0.0f && cur.iv == 0.0f && cur.iw == 0.0f);
+    assert(bsp_adc_cur_stop() == 1u);
+    assert(bsp_adc_cur_start(3300u) == 1u);
+    // 始终不稳定时必须有界失败，不能因反复重建窗口而无限等待。
+    for (uint32_t i = 0u; i < 2048u; i++)
+    {
+        inject((i % 2u != 0u) ? 1650u : 1550u, 1560u, 1540u);
+        assert(bsp_adc_cur_read(&cur) == (i < 2047u));
+        assert(bsp_adc_cur_is_calibrated() == 0u);
+    }
     assert(bsp_adc_cur_stop() == 1u);
     for (uint32_t i = 0u; i < 3u; i++)
     {

@@ -74,8 +74,11 @@ uint8_t alg_foc_step_current(const alg_foc_config_t *config, alg_foc_state_t *st
     va = alpha;
     vb = -0.5f * alpha + FOC_SQRT3_HALF * beta;
     vc = -0.5f * alpha - FOC_SQRT3_HALF * beta;
-    maximum = fmaxf(va, fmaxf(vb, vc));
-    minimum = fminf(va, fminf(vb, vc));
+    // 避免 AC5 通用 min/max 库的调用开销，为 PWM 提交保留中断时间余量。
+    maximum = (va > vb) ? va : vb;
+    minimum = (va < vb) ? va : vb;
+    if (vc > maximum) { maximum = vc; }
+    if (vc < minimum) { minimum = vc; }
     common = FOC_DUTY_MID - 0.5f * (maximum + minimum);
     result.du = va + common;
     result.dv = vb + common;

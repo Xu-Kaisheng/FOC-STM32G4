@@ -28,7 +28,8 @@ typedef enum
     APP_FAULT_OVERCURRENT,
     APP_FAULT_PWM,
     APP_FAULT_SAMPLE_LOST,
-    APP_FAULT_BUS
+    APP_FAULT_BUS,
+    APP_FAULT_CURRENT_SUM
 } app_fault_t;
 
 /* 应用层状态存储体；字段语义见 app_state.c 的默认值定义。 */

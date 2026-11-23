@@ -472,6 +472,29 @@ static void test_current_faults(void)
     }
 }
 
+/** @brief 零偏尖峰重建窗口，短暂共模干扰不锁死，持续失真仍关桥。 */
+static void test_current_noise(void)
+{
+    reset_hardware(); app_init(); s_rx = '1'; app_task();
+    sample_cycle(1551u, 1550u, 1552u);
+    sample_cycle(1450u, 1450u, 1552u);
+    assert(app_get_fault() == APP_FAULT_NONE && bsp_pwm_is_bridge_enabled() == 0u);
+    finish_calibration();
+    for (uint32_t i = 0u; i < 2u; i++)
+    {
+        sample_cycle(1450u, 1450u, 1552u);
+        assert(app_get_fault() == APP_FAULT_NONE && bsp_pwm_is_bridge_enabled() == 1u);
+        sample_cycle(1551u, 1550u, 1552u);
+    }
+    sample_cycle(1450u, 1450u, 1552u);
+    sample_cycle(1450u, 1450u, 1552u);
+    assert(app_get_fault() == APP_FAULT_NONE && bsp_pwm_is_bridge_enabled() == 1u);
+    sample_cycle(1450u, 1450u, 1552u);
+    assert(app_get_fault() == APP_FAULT_CURRENT_SUM && bsp_pwm_is_bridge_enabled() == 0u);
+    app_task(); s_rx = '1'; app_task();
+    assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
+}
+
 /** @brief 在主循环关断序列中模拟最后一帧校准到达。 */
 static void interrupt_shutdown(uint32_t *reg)
 {
@@ -598,7 +621,7 @@ int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
     test_task_accounting(); test_irq_accounting();
-    test_current_faults(); test_shutdown_race(); test_reference_faults();
+    test_current_faults(); test_current_noise(); test_shutdown_race(); test_reference_faults();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }
