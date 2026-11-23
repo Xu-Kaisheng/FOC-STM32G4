@@ -14,8 +14,6 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#define APP_LOG_QUEUE_SIZE 512u
-
 static char s_log_buf[APP_LOG_LINE_MAX];
 static uint8_t s_queue[APP_LOG_QUEUE_SIZE];
 static uint32_t s_head = 0u;
@@ -69,7 +67,7 @@ void app_log_task(void)
     {
         return;
     }
-    app_perf_begin_work();
+    app_perf_begin_task(APP_PERF_TASK_LOG);
 
     // 上一段 DMA 已完成：推进尾部，释放队列空间。
     if (s_pending != 0u)
@@ -83,7 +81,7 @@ void app_log_task(void)
     {
         s_pending = len;
     }
-    app_perf_end_work();
+    app_perf_end_task();
 }
 
 /* ---------------- write ---------------- */

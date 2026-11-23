@@ -50,38 +50,75 @@ static void test_union(void)
     app_perf_snapshot_t snap;
     uint32_t base = start_clock(0u);
     test_dwt.CYCCNT = base + 10u;
-    app_perf_begin_work();
+    app_perf_begin_task(APP_PERF_TASK_CMD);
     test_dwt.CYCCNT = base + 20u;
-    app_perf_enter_irq();
+    app_perf_enter_irq(APP_PERF_IRQ_DMA);
     test_dwt.CYCCNT = base + 30u;
-    app_perf_enter_irq();
+    app_perf_enter_irq(APP_PERF_IRQ_ADC);
     test_dwt.CYCCNT = base + 40u;
     app_perf_exit_irq();
     test_dwt.CYCCNT = base + 50u;
     app_perf_exit_irq();
     test_dwt.CYCCNT = base + 60u;
-    app_perf_end_work();
+    app_perf_end_task();
     test_dwt.CYCCNT = base + 70u;
-    app_perf_enter_irq();
+    app_perf_enter_irq(APP_PERF_IRQ_PWM);
     test_dwt.CYCCNT = base + 80u;
     app_perf_exit_irq();
     test_dwt.CYCCNT = base + 100u;
     assert(app_perf_get_snapshot(&snap) == 1u);
     assert(snap.elapsed_cycles == 100u && snap.work_cycles == 60u && snap.irq_cycles == 40u);
+    assert(snap.task_cycles[APP_PERF_TASK_CMD] == 20u);
+    assert(snap.irq_by_source[APP_PERF_IRQ_DMA] == 20u);
+    assert(snap.irq_by_source[APP_PERF_IRQ_ADC] == 10u);
+    assert(snap.irq_by_source[APP_PERF_IRQ_PWM] == 10u);
     assert(snap.control[APP_PERF_CURRENT].count == 0u);
     test_dwt.CYCCNT += 100u;
     assert(app_perf_get_snapshot(&snap) == 1u && snap.work_cycles == 0u && snap.irq_cycles == 0u);
+    for (uint32_t i = 0u; i < APP_PERF_TASK_COUNT; i++) { assert(snap.task_cycles[i] == 0u); }
+    for (uint32_t i = 0u; i < APP_PERF_IRQ_COUNT; i++) { assert(snap.irq_by_source[i] == 0u); }
     // 快照跨越尚未结束的前台任务，下一窗口从快照位置续算。
-    app_perf_begin_work();
+    app_perf_begin_task(APP_PERF_TASK_CONTROL);
     test_dwt.CYCCNT += 30u;
     test_primask = 1u;
     assert(app_perf_get_snapshot(&snap) == 1u && snap.work_cycles == 30u);
+    assert(snap.task_cycles[APP_PERF_TASK_CONTROL] == 30u);
     assert(test_primask == 1u);
     test_primask = 0u;
     test_dwt.CYCCNT += 20u;
-    app_perf_end_work();
+    app_perf_end_task();
     test_dwt.CYCCNT += 50u;
     assert(app_perf_get_snapshot(&snap) == 1u && snap.work_cycles == 20u && snap.elapsed_cycles == 70u);
+    assert(snap.task_cycles[APP_PERF_TASK_CONTROL] == 20u);
+}
+
+/** @brief 活动任务与嵌套 IRQ 同时跨窗口、跨 DWT 回绕时，各自独占时间仍守恒。 */
+static void test_nested_snapshot(void)
+{
+    app_perf_snapshot_t snap;
+    uint32_t base = start_clock(UINT32_MAX - 35u);
+    test_dwt.CYCCNT = base + 10u;
+    app_perf_begin_task(APP_PERF_TASK_CONTROL);
+    test_dwt.CYCCNT = base + 20u;
+    app_perf_enter_irq(APP_PERF_IRQ_DMA);
+    test_dwt.CYCCNT = base + 30u;
+    app_perf_enter_irq(APP_PERF_IRQ_ADC);
+    test_dwt.CYCCNT = base + 40u;
+    assert(app_perf_get_snapshot(&snap) == 1u);
+    assert(snap.elapsed_cycles == 40u && snap.work_cycles == 30u && snap.irq_cycles == 20u);
+    assert(snap.task_cycles[APP_PERF_TASK_CONTROL] == 10u);
+    assert(snap.irq_by_source[APP_PERF_IRQ_DMA] == 10u && snap.irq_by_source[APP_PERF_IRQ_ADC] == 10u);
+    test_dwt.CYCCNT = base + 50u;
+    app_perf_exit_irq();
+    test_dwt.CYCCNT = base + 60u;
+    app_perf_exit_irq();
+    test_dwt.CYCCNT = base + 70u;
+    app_perf_end_task();
+    test_dwt.CYCCNT = base + 100u;
+    assert(app_perf_get_snapshot(&snap) == 1u);
+    assert(snap.elapsed_cycles == 60u && snap.work_cycles == 30u && snap.irq_cycles == 20u);
+    assert(snap.task_cycles[APP_PERF_TASK_CONTROL] == 10u);
+    assert(snap.irq_by_source[APP_PERF_IRQ_DMA] == 10u && snap.irq_by_source[APP_PERF_IRQ_ADC] == 10u);
 }
 
 /** @brief 验证一次自然回绕、50 us 临界值与抢占响应时间。 */
@@ -91,7 +128,7 @@ static void test_control(void)
     uint32_t base = start_clock(UINT32_MAX - 100u);
     uint32_t mark = app_perf_begin_control();
     test_dwt.CYCCNT += 10u * TEST_CYCLES_PER_US;
-    app_perf_enter_irq();
+    app_perf_enter_irq(APP_PERF_IRQ_ADC);
     test_dwt.CYCCNT += 5u * TEST_CYCLES_PER_US;
     app_perf_exit_irq();
     test_dwt.CYCCNT += 5u * TEST_CYCLES_PER_US;
@@ -119,14 +156,19 @@ static void test_reporting(void)
 {
     uint32_t base = start_clock(0u);
     uint32_t mark;
-    app_perf_begin_work();
+    app_perf_begin_task(APP_PERF_TASK_CMD);
     test_dwt.CYCCNT += TEST_HZ / 4u;
-    app_perf_end_work();
+    app_perf_end_task();
+    app_perf_enter_irq(APP_PERF_IRQ_PWM);
+    test_dwt.CYCCNT += TEST_HZ / 10u;
+    app_perf_exit_irq();
     test_dwt.CYCCNT = base + TEST_HZ;
     s_tick = 1000u;
     app_perf_task();
-    assert(strstr(s_log, "work=25.00% busy=250.000ms poll=750.000ms") != NULL);
-    assert(strstr(s_log, "CURRENT=OFF") != NULL);
+    assert(strstr(s_log, "TASK 25.00%  IRQ 10.00%  POLL 65.00%") != NULL);
+    assert(strstr(s_log, "CMD       25.00%") != NULL);
+    assert(strstr(s_log, "TIM1      10.00%") != NULL);
+    assert(strstr(s_log, "CURRENT  OFF") != NULL);
     s_log[0] = '\0';
     mark = app_perf_begin_control();
     test_dwt.CYCCNT += 50u * TEST_CYCLES_PER_US;
@@ -134,14 +176,13 @@ static void test_reporting(void)
     test_dwt.CYCCNT = base + 2u * TEST_HZ;
     s_tick = 2000u;
     app_perf_task();
-    assert(strstr(s_log, "avg=50.00us max=50.00us") != NULL);
-    assert(strstr(s_log, "budget=50us peak=100.00% over=1") != NULL);
+    assert(strstr(s_log, "avg=50.00us  max=50.00us  over=1") != NULL);
     s_log[0] = '\0';
     test_dwt_running = 0u;
     app_perf_init();
     s_tick += 1000u;
     app_perf_task();
-    assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "work=") == NULL);
+    assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "TASK ") == NULL);
 }
 
 /** @brief 超长窗口和改频均不能发布貌似正常的 CPU 负载。 */
@@ -179,7 +220,7 @@ static void test_recovery(void)
         assert(app_perf_get_snapshot(&snap) == 0u && snap.clock_hz == 123u);
         s_tick = 1000u;
         app_perf_task();
-        assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "CPU work=") == NULL);
+        assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "TASK ") == NULL);
         assert((test_core_debug.DEMCR & CoreDebug_DEMCR_TRCENA_Msk) != 0u);
         assert((test_dwt.CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0u);
         assert(test_dwt.CYCCNT > stopped && test_primask == 0u);
@@ -203,7 +244,7 @@ static void test_retry(void)
         s_log[0] = '\0';
         s_tick += 1000u;
         app_perf_task();
-        assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "CPU work=") == NULL);
+        assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "TASK ") == NULL);
     }
     test_dwt_running = 1u;
     s_tick += 1000u;
@@ -225,6 +266,7 @@ static void test_retry(void)
 int32_t main(void)
 {
     test_union();
+    test_nested_snapshot();
     test_control();
     test_reporting();
     test_invalid_window();

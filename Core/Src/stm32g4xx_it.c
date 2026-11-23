@@ -194,7 +194,7 @@ void PendSV_Handler(void)
 void SysTick_Handler(void)
 {
   /* USER CODE BEGIN SysTick_IRQn 0 */
-  app_perf_enter_irq();
+  app_perf_enter_irq(APP_PERF_IRQ_SYSTICK);
 
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
@@ -217,7 +217,7 @@ void SysTick_Handler(void)
 void DMA1_Channel2_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Channel2_IRQn 0 */
-  app_perf_enter_irq();
+  app_perf_enter_irq(APP_PERF_IRQ_DMA);
 
   /* USER CODE END DMA1_Channel2_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_usart3_tx);
@@ -233,7 +233,7 @@ void DMA1_Channel2_IRQHandler(void)
 void TIM1_UP_TIM16_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM1_UP_TIM16_IRQn 0 */
-  app_perf_enter_irq();
+  app_perf_enter_irq(APP_PERF_IRQ_PWM);
   app_control_update_ISR();
 
   /* USER CODE END TIM1_UP_TIM16_IRQn 0 */
@@ -250,7 +250,7 @@ void TIM1_UP_TIM16_IRQHandler(void)
 void USART3_IRQHandler(void)
 {
   /* USER CODE BEGIN USART3_IRQn 0 */
-  app_perf_enter_irq();
+  app_perf_enter_irq(APP_PERF_IRQ_UART);
 
   /* USER CODE END USART3_IRQn 0 */
   HAL_UART_IRQHandler(&huart3);
@@ -266,7 +266,7 @@ void USART3_IRQHandler(void)
 void ADC3_IRQHandler(void)
 {
   /* USER CODE BEGIN ADC3_IRQn 0 */
-  app_perf_enter_irq();
+  app_perf_enter_irq(APP_PERF_IRQ_ADC);
   app_control_current_ISR();
 
   /* USER CODE END ADC3_IRQn 0 */

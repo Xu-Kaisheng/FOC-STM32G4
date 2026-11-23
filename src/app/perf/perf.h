@@ -23,6 +23,27 @@ typedef enum
     APP_PERF_CONTROL_COUNT
 } app_perf_control_t;
 
+typedef enum
+{
+    APP_PERF_TASK_CMD = 0,
+    APP_PERF_TASK_CONTROL,
+    APP_PERF_TASK_HALL,
+    APP_PERF_TASK_LOG,
+    APP_PERF_TASK_STATUS,
+    APP_PERF_TASK_PERF,
+    APP_PERF_TASK_COUNT
+} app_perf_task_t;
+
+typedef enum
+{
+    APP_PERF_IRQ_ADC = 0,
+    APP_PERF_IRQ_PWM,
+    APP_PERF_IRQ_SYSTICK,
+    APP_PERF_IRQ_UART,
+    APP_PERF_IRQ_DMA,
+    APP_PERF_IRQ_COUNT
+} app_perf_irq_t;
+
 typedef struct
 {
     uint32_t count;
@@ -37,6 +58,8 @@ typedef struct
     uint32_t elapsed_cycles;
     uint32_t work_cycles;     /* 前台有效工作与中断的时间并集，不重复计数。 */
     uint32_t irq_cycles;      /* work_cycles 的子集。 */
+    uint32_t task_cycles[APP_PERF_TASK_COUNT]; /* 各前台任务的独占时间，已扣除 IRQ。 */
+    uint32_t irq_by_source[APP_PERF_IRQ_COUNT]; /* 嵌套 IRQ 分别归属，不重复计数。 */
     app_perf_control_stats_t control[APP_PERF_CONTROL_COUNT];
 } app_perf_snapshot_t;
 
@@ -47,7 +70,7 @@ void app_perf_init(void);
 
 /* ---------------- task ---------------- */
 
-/** @brief 主循环每秒输出一次；无控制调用明确显示 OFF，失效后重建窗口并重试。 */
+/** @brief 由 app_task 每秒调用输出；无控制样本显示 OFF，失效后重建统计窗口。 */
 void app_perf_task(void);
 
 /* ---------------- read ---------------- */
@@ -67,23 +90,17 @@ uint8_t app_perf_get_snapshot(app_perf_snapshot_t *out);
 void app_perf_begin_work(void);
 /** @brief 标记有效工作结束；忙等延时也消耗 CPU，应包含在工作区间。 */
 void app_perf_end_work(void);
-/** @brief 在正常 ISR 的 USER CODE 入口调用；不用于致命异常。 */
-void app_perf_enter_irq(void);
+/** @brief 标记前台任务有效工作；任务之间不嵌套，IRQ 抢占时间自动扣除。 */
+void app_perf_begin_task(app_perf_task_t task);
+/** @brief 结束前台任务计时，与 begin_task 配对。 */
+void app_perf_end_task(void);
+/** @brief 在正常 ISR 的 USER CODE 入口指定来源；不用于致命异常。 */
+void app_perf_enter_irq(app_perf_irq_t source);
 /** @brief 在正常 ISR 的 USER CODE 出口调用，与入口配对。 */
 void app_perf_exit_irq(void);
 /** @brief 开始控制任务计时并进入有效工作区间，返回周期时间戳。 */
 uint32_t app_perf_begin_control(void);
 /** @brief 结束控制计时；含抢占时间，CURRENT 按 50 us 预算统计超时。 */
 void app_perf_end_control(app_perf_control_t control, uint32_t start);
-
-/* ---------------- internal ---------------- */
-/* 仅供 perf_print.c 使用。 */
-
-/**
- * @brief  判断是否到了 1 s 报告时刻，并记录本次时刻
- * @param  now: 当前毫秒时基
- * @retval 1 该输出报告；0 未到周期
- */
-uint8_t app_perf_check_report(uint32_t now);
 
 #endif /* PERF_H */

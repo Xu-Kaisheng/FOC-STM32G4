@@ -68,16 +68,18 @@ void app_control_task(void)
 {
     if ((s_started != 0u) && (app_get_fault() != APP_FAULT_NONE))
     {
+        app_perf_begin_task(APP_PERF_TASK_CONTROL);
         app_control_stop();
         app_set_mode_raw(APP_MODE_STOP);
         app_log_write("[FAULT] code=%u, reset required\r\n", (unsigned)app_get_fault());
+        app_perf_end_task();
     }
     if ((s_started != 0u) &&
         ((bsp_board_get_millis() - s_last_bus_ms) >= CONTROL_BUS_PERIOD_MS))
     {
-        app_perf_begin_work();
+        app_perf_begin_task(APP_PERF_TASK_CONTROL);
         if (update_bus() == 0u) { app_control_trip_fault(APP_FAULT_BUS); }
-        app_perf_end_work();
+        app_perf_end_task();
     }
 }
 

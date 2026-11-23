@@ -34,7 +34,7 @@ GPIO_TypeDef test_gpioc;
 TIM_TypeDef test_tim1;
 static ADC_TypeDef s_adcs[4];
 static USART_TypeDef s_uart;
-static char s_tx_capture[1024];
+static char s_tx_capture[4096];
 static uint32_t s_tx_length;
 static uint8_t s_tx_dma_busy;
 ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4;
@@ -365,20 +365,20 @@ static void test_log(void)
     app_log_task();
     assert(s_tx_length == 2u);
 
-    // 队列刚好装满 511 字节（跨缓冲区末尾），随后一条 4 字节日志必须整条丢弃。
-    for (uint32_t i = 0u; i < 511u; i++) { app_log_write("Y"); }
+    // 队列刚好装满 1023 字节（跨缓冲区末尾），随后一条 4 字节日志必须整条丢弃。
+    for (uint32_t i = 0u; i < APP_LOG_QUEUE_SIZE - 1u; i++) { app_log_write("Y"); }
     app_log_write("DROP");
     s_tx_length = 0u;
     app_log_task();
     // 第一段只能发到缓冲区末尾；剩余 1 字节在下一轮发出。
-    assert(s_tx_length == 510u);
+    assert(s_tx_length == APP_LOG_QUEUE_SIZE - 2u);
     uart_dma_finish();
     app_log_task();
-    assert(s_tx_length == 511u);
-    for (uint32_t i = 0u; i < 511u; i++) { assert(s_tx_capture[i] == 'Y'); }
+    assert(s_tx_length == APP_LOG_QUEUE_SIZE - 1u);
+    for (uint32_t i = 0u; i < APP_LOG_QUEUE_SIZE - 1u; i++) { assert(s_tx_capture[i] == 'Y'); }
     uart_dma_finish();
     app_log_task();
-    assert(s_tx_length == 511u);
+    assert(s_tx_length == APP_LOG_QUEUE_SIZE - 1u);
 }
 
 /** @brief 发送失败释放在途段，接收错误与其他串口错误不释放发送缓冲区。 */
@@ -551,6 +551,7 @@ static void test_task_accounting(void)
     test_dwt.CYCCNT += 100u;
     assert(app_perf_get_snapshot(&snapshot) == 1u);
     assert(snapshot.work_cycles == TEST_DELAY_CYCLES);
+    assert(snapshot.task_cycles[APP_PERF_TASK_CMD] == TEST_DELAY_CYCLES);
     assert(snapshot.elapsed_cycles == TEST_RX_CYCLES + TEST_DELAY_CYCLES + 100u);
 
     app_log_task();
@@ -558,6 +559,7 @@ static void test_task_accounting(void)
     app_log_task();  /* DMA 等待，不能重复提交。 */
     assert(app_perf_get_snapshot(&snapshot) == 1u);
     assert(snapshot.work_cycles == TEST_TX_CYCLES);
+    assert(snapshot.task_cycles[APP_PERF_TASK_LOG] == TEST_TX_CYCLES);
     assert(snapshot.elapsed_cycles == TEST_TX_CYCLES + 100u);
 
     uart_dma_finish();
@@ -593,7 +595,62 @@ static void test_irq_accounting(void)
     test_dwt.CYCCNT += 23u;
     assert(app_perf_get_snapshot(&snapshot) == 1u);
     assert(snapshot.irq_cycles == 50u && snapshot.work_cycles == 50u);
+    assert(snapshot.irq_by_source[APP_PERF_IRQ_DMA] == 24u);
+    assert(snapshot.irq_by_source[APP_PERF_IRQ_SYSTICK] == 7u);
+    assert(snapshot.irq_by_source[APP_PERF_IRQ_UART] == 19u);
     assert(snapshot.elapsed_cycles == 90u && test_primask == 0u);
+}
+
+/** @brief 通过实际环形队列与 DMA 桩排空日志，覆盖跨队尾的分段发送。 */
+static void drain_log(void)
+{
+    for (uint32_t i = 0u; i < 4u; i++)
+    {
+        app_log_task();
+        if (s_tx_dma_busy != 0u) { uart_dma_finish(); }
+    }
+    assert(s_tx_dma_busy == 0u && s_tx_length < sizeof(s_tx_capture));
+    s_tx_capture[s_tx_length] = '\0';
+}
+
+/** @brief 每秒仅一份完整报告，毫秒回绕及环形队列回绕均不重复、不截尾。 */
+static void test_periodic_report(void)
+{
+    uint32_t base, length, tick;
+    reset_hardware();
+    s_tick = UINT32_MAX - 500u;
+    app_init();
+    tick = s_tick;
+    base = test_dwt.CYCCNT;
+    drain_log();
+    s_tx_length = 0u;
+    for (uint32_t window = 1u; window <= 2u; window++)
+    {
+        s_tick = tick + window * 1000u - 1u;
+        test_dwt.CYCCNT = base + (SystemCoreClock / 1000u) * (window * 1000u - 1u);
+        app_task(); drain_log();
+        assert(s_tx_length == 0u);
+        s_tick++;
+        test_dwt.CYCCNT += SystemCoreClock / 1000u;
+        app_task(); drain_log();
+        assert(strstr(s_tx_capture, "[FOC] OFF  fault=0") != NULL);
+        assert(strstr(s_tx_capture, "Axis(A)    Actual    Target") != NULL);
+        assert(strstr(s_tx_capture, "Iuvw(A)") != NULL);
+        assert(strstr(s_tx_capture, "[CPU] TASK ") != NULL);
+        assert(strstr(s_tx_capture, "IRQ         CPU") != NULL);
+        assert(strstr(s_tx_capture, "CONTROL") != NULL && strstr(s_tx_capture, "TIM1") != NULL);
+        assert(strstr(s_tx_capture, "SYSTICK") != NULL && strstr(s_tx_capture, "USART3") != NULL);
+        assert(strstr(s_tx_capture, "DMA_TX") != NULL && strstr(s_tx_capture, "PERF") != NULL);
+        assert(strstr(s_tx_capture, "CURRENT  OFF\r\n") != NULL);
+        assert(strstr(s_tx_capture, "raw=") == NULL && strstr(s_tx_capture, "VBUS") == NULL);
+        assert(strstr(s_tx_capture, "VREF") == NULL);
+        assert(strstr(strstr(s_tx_capture, "[FOC]") + 1, "[FOC]") == NULL);
+        assert(strstr(strstr(s_tx_capture, "[CPU]") + 1, "[CPU]") == NULL);
+        length = s_tx_length;
+        app_task(); app_task(); drain_log();
+        assert(s_tx_length == length);
+        s_tx_length = 0u;
+    }
 }
 
 /** @brief 第二通道失败或采样过期时，实际应用必须关桥并锁住启动入口。 */
@@ -620,7 +677,7 @@ static void test_reference_faults(void)
 int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
-    test_task_accounting(); test_irq_accounting();
+    test_task_accounting(); test_irq_accounting(); test_periodic_report();
     test_current_faults(); test_current_noise(); test_shutdown_race(); test_reference_faults();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;

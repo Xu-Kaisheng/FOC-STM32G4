@@ -91,8 +91,8 @@ void app_cmd_task(void)
 
     if (bsp_uart_read_byte(&c) != 0u)
     {
-        app_perf_begin_work();
+        app_perf_begin_task(APP_PERF_TASK_CMD);
         handle_command(c);
-        app_perf_end_work();
+        app_perf_end_task();
     }
 }

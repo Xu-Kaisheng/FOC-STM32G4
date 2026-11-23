@@ -106,6 +106,7 @@ void app_init(void)
                   bsp_hall_get_state_str(hall));
     // 启动校准与自检不混入运行负载窗口。
     app_perf_init();
+    app_set_last_print_ms(bsp_board_get_millis());
 }
 
 /* ---------------- task ---------------- */
@@ -116,6 +117,7 @@ void app_init(void)
 void app_task(void)
 {
     app_mode_t mode;
+    uint32_t now;
 
     // 1) 日志发送：模块内部只计队列回收和发送推进，空轮询不计入工作。
     app_log_task();
@@ -134,16 +136,21 @@ void app_task(void)
         hall_state_t h = bsp_hall_read();
         if (h != app_get_last_hall())
         {
-            app_perf_begin_work();
+            app_perf_begin_task(APP_PERF_TASK_HALL);
             app_set_last_hall(h);
             app_log_write("HALL -> %s\r\n", bsp_hall_get_state_str(h));
-            app_perf_end_work();
+            app_perf_end_task();
         }
     }
 
-    // 5) 周期性状态打印 + 每秒性能报告
-    app_status_task();
-    app_perf_task();
+    // 5) 共用 1 s 节拍，避免状态与性能各自定时而交错刷屏。
+    now = bsp_board_get_millis();
+    if ((now - app_get_last_print_ms()) >= APP_PERF_REPORT_MS)
+    {
+        app_set_last_print_ms(now);
+        app_status_task();
+        app_perf_task();
+    }
 }
 
 /* ---------------- write ---------------- */
