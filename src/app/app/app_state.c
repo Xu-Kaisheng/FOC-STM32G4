@@ -6,7 +6,7 @@
  */
 #include "app_state.h"
 
-app_state_storage_t app_state_storage =
+static app_state_storage_t app_state_storage =
 {
     .mode = APP_MODE_STOP,
     .last_print_ms = 0u,
@@ -40,6 +40,12 @@ uint8_t app_get_adc_ready(void)
     return app_state_storage.adc_ready;
 }
 
+/** @brief 查询锁存故障。 */
+app_fault_t app_get_fault(void)
+{
+    return app_state_storage.fault;
+}
+
 /* ---------------- write ---------------- */
 
 /** @brief 设置模式。 */
@@ -64,4 +70,10 @@ void app_set_last_hall(hall_state_t hall)
 void app_set_adc_ready(uint8_t ready)
 {
     app_state_storage.adc_ready = ready;
+}
+
+/** @brief 写入故障状态。 */
+void app_set_fault(app_fault_t fault)
+{
+    app_state_storage.fault = fault;
 }

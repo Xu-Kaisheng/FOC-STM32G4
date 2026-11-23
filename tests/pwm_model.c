@@ -42,6 +42,11 @@ void test_pwm_update(void)
 /** @brief 拦截 CMSIS 寄存器写宏，在各写入点注入定时器事件。 */
 void test_pwm_write_reg(uint32_t *reg, uint32_t value)
 {
+    // RM0440 规定中心对齐时 DIR 只读，不能让普通寄存器模型掩盖重启方向错误。
+    if ((reg == &test_tim1.CR1) && ((*reg & TIM_CR1_CMS) != 0u))
+    {
+        value = (value & ~TIM_CR1_DIR) | (*reg & TIM_CR1_DIR);
+    }
     *reg = value;
     if (reg == &test_tim1.EGR)
     {

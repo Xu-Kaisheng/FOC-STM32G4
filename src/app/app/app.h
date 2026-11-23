@@ -31,7 +31,7 @@ void app_task(void);
  * @brief  进入指定模式
  * @param  mode: 目标模式
  * @note   任何切换都先关桥、停 PWM，再等待驱动板过流锁存复位时间；
- *         开桥前必须通过 bsp_pwm_check_ready() 与六步联锁。
+ *         开桥前必须通过 bsp_pwm_check_ready() 与同步采样联锁。
  */
 void app_set_mode(app_mode_t mode);
 

@@ -101,18 +101,17 @@ static void test_control(void)
     app_perf_end_control(APP_PERF_CURRENT, mark);
     mark = app_perf_begin_control();
     test_dwt.CYCCNT += 100u * TEST_CYCLES_PER_US;
-    app_perf_end_control(APP_PERF_SIXSTEP, mark);
+    app_perf_end_control(APP_PERF_CURRENT, mark);
     test_dwt.CYCCNT = base + TEST_HZ;
     s_tick = 1000u;
     assert(app_perf_get_snapshot(&snap) == 1u);
     assert(snap.elapsed_cycles == TEST_HZ);
     assert(snap.work_cycles == 170u * TEST_CYCLES_PER_US);
     assert(snap.irq_cycles == 5u * TEST_CYCLES_PER_US);
-    assert(snap.control[APP_PERF_CURRENT].count == 2u);
-    assert(snap.control[APP_PERF_CURRENT].total_cycles == 70u * TEST_CYCLES_PER_US);
-    assert(snap.control[APP_PERF_CURRENT].max_cycles == 50u * TEST_CYCLES_PER_US);
-    assert(snap.control[APP_PERF_CURRENT].overruns == 1u);
-    assert(snap.control[APP_PERF_SIXSTEP].overruns == 0u);
+    assert(snap.control[APP_PERF_CURRENT].count == 3u);
+    assert(snap.control[APP_PERF_CURRENT].total_cycles == 170u * TEST_CYCLES_PER_US);
+    assert(snap.control[APP_PERF_CURRENT].max_cycles == 100u * TEST_CYCLES_PER_US);
+    assert(snap.control[APP_PERF_CURRENT].overruns == 2u);
 }
 
 /** @brief 验证无样本提示、比例换算、日志长度及计数器不可用路径。 */
@@ -127,7 +126,7 @@ static void test_reporting(void)
     s_tick = 1000u;
     app_perf_task();
     assert(strstr(s_log, "work=25.00% busy=250.000ms poll=750.000ms") != NULL);
-    assert(strstr(s_log, "CURRENT=OFF") != NULL && strstr(s_log, "SIXSTEP=OFF") != NULL);
+    assert(strstr(s_log, "CURRENT=OFF") != NULL);
     s_log[0] = '\0';
     mark = app_perf_begin_control();
     test_dwt.CYCCNT += 50u * TEST_CYCLES_PER_US;
@@ -172,7 +171,7 @@ static void test_recovery(void)
         (void)start_clock(0u);
         mark = app_perf_begin_control();
         test_dwt.CYCCNT += 100u;
-        app_perf_end_control(APP_PERF_SIXSTEP, mark);
+        app_perf_end_control(APP_PERF_CURRENT, mark);
         stopped = test_dwt.CYCCNT;
         if (scenario == 0u) { test_core_debug.DEMCR &= ~CoreDebug_DEMCR_TRCENA_Msk; }
         else { test_dwt.CTRL &= ~DWT_CTRL_CYCCNTENA_Msk; }
@@ -188,7 +187,7 @@ static void test_recovery(void)
         s_tick += 1000u;
         assert(app_perf_get_snapshot(&snap) == 1u && snap.elapsed_cycles == TEST_HZ);
         assert(snap.work_cycles == 0u && snap.irq_cycles == 0u);
-        assert(snap.control[APP_PERF_SIXSTEP].count == 0u);
+        assert(snap.control[APP_PERF_CURRENT].count == 0u);
     }
 }
 

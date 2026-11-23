@@ -2,7 +2,7 @@
  * @file    app.c
  * @brief   v0.1 应用主循环：初始化、模式联锁、调度
  *
- * 本文件只做编排：换相策略在 `app/control`，命令在 `app_cmd`，
+ * 本文件只做编排：电流环策略在 `app/control`，命令在 `app_cmd`，
  * 打印在 `app_status`，统计在 `app_perf`，日志队列在 `app_log`。
  *
  * 为什么不拆成多个文件（250 行软限例外）：初始化、模式联锁与主循环共用
@@ -125,7 +125,7 @@ void app_task(void)
 
     mode = app_get_mode();
 
-    // 3) 控制策略：六步模式下按步间隔推进；其他模式立即返回
+    // 3) 控制策略：维护母线输入与故障收尾，电流环由采样 ISR 推进
     app_control_task();
 
     // 4) 霍尔监视模式：只在状态变化时打印
@@ -154,14 +154,13 @@ void app_task(void)
  */
 void app_set_mode(app_mode_t mode)
 {
-    if (mode == app_get_mode())
+    if ((mode == app_get_mode()) && (mode != APP_MODE_STOP))
     {
         return;
     }
 
     // 任何模式切换都先断电，再按新模式配置，避免带载切换
-    (void)bsp_pwm_enable_bridge(0u);
-    bsp_pwm_stop();
+    app_control_stop();
     // 只在主循环中等待；此时桥和 PWM 都已关闭，保证重新使能前低电平足够长。
     bsp_board_delay_ms(BRIDGE_RESET_WAIT_MS);
 
@@ -173,8 +172,7 @@ void app_set_mode(app_mode_t mode)
             app_log_write("[MODE] STOP\r\n");
             break;
 
-        case APP_MODE_SIXSTEP_FWD:
-        case APP_MODE_SIXSTEP_REV:
+        case APP_MODE_FOC:
             if (bsp_board_get_drive_allowed() == 0u)
             {
                 // 照片不能证明板载占用与功率级接线正确，未核验平台只能监视。
@@ -191,13 +189,12 @@ void app_set_mode(app_mode_t mode)
             if (app_control_start() == 0u)
             {
                 app_set_mode_raw(APP_MODE_STOP);
-                app_log_write("[FATAL] Six-step interlock rejected, stay in STOP\r\n");
+                app_log_write("[FATAL] Current-loop interlock rejected, stay in STOP\r\n");
                 break;
             }
-            app_log_write("[MODE] SIXSTEP %s, f=%.1f Hz, duty=%.0f%%\r\n",
-                          (mode == APP_MODE_SIXSTEP_FWD) ? "FWD" : "REV",
-                          (double)app_control_get_elec_hz(),
-                          (double)(app_control_get_duty() * 100.0f));
+            app_log_write("[MODE] FOC current, angle=%.0f deg, Id=%.2f Iq=%.2f A\r\n",
+                          (double)app_control_get_angle(), (double)app_control_get_id(),
+                          (double)app_control_get_iq());
             break;
 
         case APP_MODE_HALL_MON:

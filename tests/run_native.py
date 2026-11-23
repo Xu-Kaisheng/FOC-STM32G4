@@ -20,7 +20,6 @@ APP_INCLUDES = [
     "src/app/perf",
     "src/app/log",
     "src/app/control",
-    "src/algorithm/sixstep",
     "src/algorithm/foc",
 ]
 
@@ -63,7 +62,8 @@ def main():
         "src/app/perf/perf_print.c",
         "src/app/log/app_log.c",
         "src/app/control/app_control.c",
-        "src/algorithm/sixstep/alg_sixstep.c",
+        "src/algorithm/foc/alg_foc.c",
+        "src/app/control/app_current.c",
         "tests/perf_clock.c",
     ]
     script = build / "run.cmd"
@@ -101,6 +101,17 @@ def main():
         '/Fobuild/native-tests/perf/ /Febuild/native-tests/perf/runtime.exe\n'
         'if errorlevel 1 exit /b 1\nbuild\\native-tests\\perf\\runtime.exe\n', encoding="utf-8")
     subprocess.run(["cmd.exe", "/d", "/c", str(perf_script)], cwd=root, check=True)
+
+    foc_build = build / "foc"
+    foc_build.mkdir(exist_ok=True)
+    foc_script = foc_build / "run.cmd"
+    foc_script.write_text(
+        f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
+        'cl /nologo /utf-8 /std:c11 /W4 /WX /Isrc/algorithm/foc '
+        'tests/test_foc.c src/algorithm/foc/alg_foc.c '
+        '/Fobuild/native-tests/foc/ /Febuild/native-tests/foc/runtime.exe\n'
+        'if errorlevel 1 exit /b 1\nbuild\\native-tests\\foc\\runtime.exe\n', encoding="utf-8")
+    subprocess.run(["cmd.exe", "/d", "/c", str(foc_script)], cwd=root, check=True)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
  *
  * 从原性能统计模块拆分而来：
  *   - 硬件能力（读周期计数）下沉到 bsp/time/cycle.h；
- *   - 统计与业务分类（SIXSTEP/CURRENT）留在应用层，BSP 不再被业务牵着走。
+ *   - 统计与业务分类（CURRENT）留在应用层，BSP 不再被业务牵着走。
  */
 #ifndef PERF_H
 #define PERF_H
@@ -19,8 +19,7 @@
 
 typedef enum
 {
-    APP_PERF_SIXSTEP = 0,
-    APP_PERF_CURRENT,
+    APP_PERF_CURRENT = 0,
     APP_PERF_CONTROL_COUNT
 } app_perf_control_t;
 

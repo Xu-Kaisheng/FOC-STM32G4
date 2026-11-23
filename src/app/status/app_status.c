@@ -14,52 +14,25 @@
 #include "perf.h"
 
 #define APP_PRINT_PERIOD_MS 500u
-#define APP_SAMPLE_MAX_AGE_MS 20u
-#define APP_PERCENT_SCALE   100.0f
 
 /* ---------------- internal ---------------- */
 
-/**
- * @brief  打印一行状态（含母线电压）
- * @note   ADC 链路失效时先锁存故障并关桥，再从本函数返回。
- */
+/** @brief 打印控制 ISR 的完整快照，状态任务不触发或消费电流 ADC。 */
 static void print_status(void)
 {
-    adc_cur_sample_t cur = {0};
-    adc_vbus_sample_t vbus = {0};
-
-    if (app_get_adc_ready() == 0u)
-    {
-        app_log_write("H=%s | ADC=INVALID\r\n", bsp_hall_get_state_str(bsp_hall_read()));
-        return;
-    }
-    if (bsp_adc_vbus_read(&vbus) == 0u)
-    {
-        // 母线监视链路失效也要先关桥，禁止继续打印旧电压或重新启动。
-        app_set_adc_ready(0u);
-        app_set_mode(APP_MODE_STOP);
-        app_log_write("[FATAL] VBUS ADC read failed, reset required\r\n");
-        return;
-    }
-    if ((bsp_adc_cur_read(&cur, vbus.vref_mv) == 0u) ||
-        ((bsp_board_get_millis() - vbus.sampled_ms) > APP_SAMPLE_MAX_AGE_MS))
-    {
-        // 采样链路失效必须先关桥；锁存到复位，禁止把零值误报为正常电流。
-        app_set_adc_ready(0u);
-        app_set_mode(APP_MODE_STOP);
-        app_log_write("[FATAL] ADC read failed, reset required\r\n");
-        return;
-    }
-
-    app_log_write("H=%s f=%.1fHz D=%2.0f%% | Iu=%+5.2f Iv=%+5.2f Iw=%+5.2f A | raw=%4u,%4u,%4u\r\n",
-                    bsp_hall_get_state_str(bsp_hall_read()),
-                    (double)app_control_get_elec_hz(),
-                    (double)(app_control_get_duty() * APP_PERCENT_SCALE),
-                    (double)cur.iu, (double)cur.iv, (double)cur.iw,
-                    cur.raw[0], cur.raw[1], cur.raw[2]);
-    // 独立一行，避免超过串口单条日志的 127 字节上限。
-    app_log_write("VBUS=%.2f V | raw=%4u | VREF=%u mV\r\n",
-                  (double)vbus.voltage, vbus.raw, vbus.vref_mv);
+    app_control_feedback_t feedback;
+    adc_vbus_sample_t vbus;
+    app_control_get_feedback(&feedback);
+    app_control_get_bus(&vbus);
+    app_log_write("FOC=%s fault=%u H=%s | Id=%+.3f/%.3f Iq=%+.3f/%.3f A\r\n",
+                  (feedback.running != 0u) ? "RUN" : "OFF", (unsigned)app_get_fault(),
+                  bsp_hall_get_state_str(bsp_hall_read()),
+                  (double)feedback.foc.id, (double)feedback.id_ref,
+                  (double)feedback.foc.iq, (double)feedback.iq_ref);
+    app_log_write("Iuvw=%+.3f,%+.3f,%+.3f A | raw=%u,%u,%u | VBUS=%.2f V VREF=%u mV\r\n",
+                  (double)feedback.phase.iu, (double)feedback.phase.iv, (double)feedback.phase.iw,
+                  feedback.phase.raw[0], feedback.phase.raw[1], feedback.phase.raw[2],
+                  (double)vbus.voltage, vbus.vref_mv);
 }
 
 /* ---------------- task ---------------- */

@@ -1,221 +1,131 @@
-/**
- * @file    app_control.c
- * @brief   算法策略：六步参数、步进调度与 BSP 回调注入
+/** @file app_control.c
+ *  @brief 电流环启动、母线维护和故障收尾；高速计算见 app_current.c。
  */
 #include "app_control.h"
-#include "alg_sixstep.h"
-#include "app_state.h"
+#include "app_log.h"
 #include "board.h"
 #include "perf.h"
 #include "pwm.h"
+#include <math.h>
 
-/* 台架调试范围：先留余量，别一上来就满压。 */
-#define APP_CONTROL_DUTY_MIN      0.05f
-#define APP_CONTROL_DUTY_MAX      0.60f
-#define APP_CONTROL_ELEC_HZ_MIN   0.5f
-#define APP_CONTROL_ELEC_HZ_MAX   20.0f
+#define CONTROL_BUS_PERIOD_MS  10u
+#define CONTROL_BUS_MAX_AGE_MS 20u
+#define CONTROL_BUS_MIN_V      8.0f
+#define CONTROL_BUS_MAX_V      30.0f
+#define CONTROL_VREF_DRIFT_MV  50u
+#define CONTROL_ZERO_DUTY      0.485f
 
-/* 初始值：占空比 20%、电频率 1 Hz。 */
-#define APP_CONTROL_DUTY_DEFAULT     0.20f
-#define APP_CONTROL_ELEC_HZ_DEFAULT  1.0f
-
-/* 每电周期 6 步，步间隔 = 1000 / (6 * f_e) */
-#define APP_CONTROL_STEP_PER_CYCLE  6.0f
-#define APP_CONTROL_MS_PER_SECOND   1000.0f
-
-static uint8_t  s_step = 0u;
-static float    s_duty = APP_CONTROL_DUTY_DEFAULT;
-static float    s_elec_hz = APP_CONTROL_ELEC_HZ_DEFAULT;
-static uint32_t s_last_step_ms = 0u;
+static adc_vbus_sample_t s_bus;
+static uint32_t s_last_bus_ms;
+static uint16_t s_start_vref;
+static uint8_t s_started;
 
 /* ---------------- internal ---------------- */
 
-/** @brief 把算法的高低相组合交给 BSP，通过 COM 一次提交。 */
-static uint8_t control_apply_pair(uint8_t high, uint8_t low)
+/** @brief 采样成功且电源在台架范围内时才更新 ISR 的电压换算。 */
+static uint8_t update_bus(void)
 {
-    return bsp_pwm_apply_pair((pwm_phase_t)high, (pwm_phase_t)low);
+    adc_vbus_sample_t sample = {0};
+    if ((bsp_adc_vbus_read(&sample) == 0u) ||
+        ((bsp_board_get_millis() - sample.sampled_ms) > CONTROL_BUS_MAX_AGE_MS) ||
+        !isfinite(sample.voltage) || (sample.voltage < CONTROL_BUS_MIN_V) ||
+        (sample.voltage > CONTROL_BUS_MAX_V))
+    {
+        return 0u;
+    }
+    if ((s_started != 0u) &&
+        ((sample.vref_mv + CONTROL_VREF_DRIFT_MV < s_start_vref) ||
+         (sample.vref_mv > s_start_vref + CONTROL_VREF_DRIFT_MV)))
+    {
+        return 0u;
+    }
+    s_bus = sample;
+    s_last_bus_ms = sample.sampled_ms;
+    // 除法留在主循环；ISR 仅乘以倒数，零偏标定期间也检查样本时效。
+    app_control_set_bus(1.0f / sample.voltage, sample.sampled_ms);
+    return 1u;
 }
-
-/** @brief 把算法的"三相占空比"回调接到 BSP。 */
-static void control_set_duty_raw(float du, float dv, float dw)
-{
-    bsp_pwm_set_duty_raw(du, dv, dw);
-}
-
-static const alg_sixstep_io_t s_algo_io =
-{
-    control_apply_pair,
-    control_set_duty_raw
-};
 
 /* ---------------- init ---------------- */
 
-/**
- * @brief  复位参数并注入 BSP 输出接口
- */
+/** @brief 复位参数与锁存状态，必须在开中断控制前调用。 */
 void app_control_init(void)
 {
-    alg_sixstep_init(&s_algo_io);
-    s_step = 0u;
-    s_duty = APP_CONTROL_DUTY_DEFAULT;
-    s_elec_hz = APP_CONTROL_ELEC_HZ_DEFAULT;
-    s_last_step_ms = 0u;
+    s_bus = (adc_vbus_sample_t){0};
+    s_last_bus_ms = 0u;
+    s_started = 0u;
+    app_set_fault(APP_FAULT_NONE);
+    app_control_reset_current();
+    (void)app_control_set_id(0.0f);
+    (void)app_control_set_iq(0.0f);
+    (void)app_control_set_angle(0.0f);
 }
 
 /* ---------------- task ---------------- */
 
-/**
- * @brief  主循环控制任务
- */
+/** @brief 主循环只维护慢速输入和故障清理。 */
 void app_control_task(void)
 {
-    app_mode_t mode = app_get_mode();
-    uint32_t now;
-    uint32_t step_ms;
-    uint32_t perf_start;
-    uint8_t applied;
-
-    if ((mode != APP_MODE_SIXSTEP_FWD) && (mode != APP_MODE_SIXSTEP_REV))
+    if ((s_started != 0u) && (app_get_fault() != APP_FAULT_NONE))
     {
-        return;
-    }
-
-    now = bsp_board_get_millis();
-    step_ms = (uint32_t)(APP_CONTROL_MS_PER_SECOND / (APP_CONTROL_STEP_PER_CYCLE * s_elec_hz));
-    if (step_ms == 0u)
-    {
-        step_ms = 1u;
-    }
-    if ((now - s_last_step_ms) < step_ms)
-    {
-        return;
-    }
-    s_last_step_ms = now;
-
-    perf_start = app_perf_begin_control();
-    s_step = alg_sixstep_next_step(s_step, (mode == APP_MODE_SIXSTEP_FWD) ? 1u : 0u);
-    applied = alg_sixstep_apply(s_step, s_duty);
-    if (applied == 0u)
-    {
-        // 输出配置失效时不能保持旧步继续运行，先关桥停 PWM 再退回停机态。
-        bsp_pwm_stop();
+        app_control_stop();
         app_set_mode_raw(APP_MODE_STOP);
+        app_log_write("[FAULT] code=%u, reset required\r\n", (unsigned)app_get_fault());
     }
-    app_perf_end_control(APP_PERF_SIXSTEP, perf_start);
+    if ((s_started != 0u) &&
+        ((bsp_board_get_millis() - s_last_bus_ms) >= CONTROL_BUS_PERIOD_MS))
+    {
+        app_perf_begin_work();
+        if (update_bus() == 0u) { app_control_trip_fault(APP_FAULT_BUS); }
+        app_perf_end_work();
+    }
 }
 
 /* ---------------- read ---------------- */
 
-/** @brief 当前换相步。 */
-uint8_t app_control_get_step(void)
+/** @brief 母线结构仅主循环读写，无跨中断撕裂。 */
+void app_control_get_bus(adc_vbus_sample_t *out)
 {
-    return s_step;
-}
-
-/** @brief 当前占空比。 */
-float app_control_get_duty(void)
-{
-    return s_duty;
-}
-
-/** @brief 当前电频率。 */
-float app_control_get_elec_hz(void)
-{
-    return s_elec_hz;
-}
-
-/**
- * @brief  查询当前步的高相与低相
- * @param  high: 高相输出地址
- * @param  low:  低相输出地址
- */
-void app_control_get_phases(uint8_t *high, uint8_t *low)
-{
-    alg_sixstep_get_phases(s_step, high, low);
+    *out = s_bus;
 }
 
 /* ---------------- write ---------------- */
 
-/**
- * @brief  启动六步输出
- * @retval 1 成功；0 自检或联锁失败且已停 PWM
- */
+/** @brief 先准备三路 ADC，再启动中性 PWM；开桥留给完整零偏标定后的 ISR。 */
 uint8_t app_control_start(void)
 {
-    uint8_t hi;
-    uint8_t lo;
-
-    s_step = 0u;
-    s_last_step_ms = bsp_board_get_millis();
-
-    // 关桥时先为三相装入同一占空比并启动（bsp_pwm_start 会把三路都打开），
-    // 再由 alg_sixstep_apply 提交高低相模式和悬空相——开桥前必须完成两步。
-    bsp_pwm_set_duty_raw(s_duty, s_duty, s_duty);
+    if ((app_get_fault() != APP_FAULT_NONE) || (app_get_adc_ready() == 0u) ||
+        (bsp_board_get_drive_allowed() == 0u)) { return 0u; }
+    app_control_reset_current();
+    if (update_bus() == 0u) { app_control_trip_fault(APP_FAULT_BUS); return 0u; }
+    s_start_vref = s_bus.vref_mv;
+    if (bsp_adc_cur_start(s_start_vref) == 0u)
+    {
+        app_control_trip_fault(APP_FAULT_ADC);
+        return 0u;
+    }
+    s_started = 1u;
+    bsp_pwm_set_duty(CONTROL_ZERO_DUTY, CONTROL_ZERO_DUTY, CONTROL_ZERO_DUTY);
+    app_control_enable_current(1u);
     bsp_pwm_start();
-
-    // 安全联锁：六路输出/死区没验证通过，绝不允许把 CTRL_SD 拉高。
     if (bsp_pwm_check_ready() == 0u)
     {
-        bsp_pwm_stop();
+        app_control_trip_fault(APP_FAULT_PWM);
+        app_control_stop();
         return 0u;
     }
-
-    if (alg_sixstep_apply(s_step, s_duty) == 0u)
-    {
-        bsp_pwm_stop();
-        return 0u;
-    }
-    app_control_get_phases(&hi, &lo);
-    if (bsp_pwm_enable_bridge_sixstep((pwm_phase_t)hi, (pwm_phase_t)lo) == 0u)
-    {
-        bsp_pwm_stop();
-        return 0u;
-    }
+    bsp_pwm_enable_update_irq(1u);
     return 1u;
 }
 
-/**
- * @brief  设置占空比并钳位
- * @param  duty: 0.0~1.0
- * @retval 钳位后的实际值
- */
-float app_control_set_duty(float duty)
+/** @brief 先撤销开桥许可，避免停止过程中 ADC 抢占重新开桥。 */
+void app_control_stop(void)
 {
-    if (duty < APP_CONTROL_DUTY_MIN)
+    app_control_enable_current(0u);
+    bsp_pwm_stop();
+    if (s_started != 0u)
     {
-        duty = APP_CONTROL_DUTY_MIN;
+        if (bsp_adc_cur_stop() == 0u) { app_set_fault(APP_FAULT_ADC); }
     }
-    else if (duty > APP_CONTROL_DUTY_MAX)
-    {
-        duty = APP_CONTROL_DUTY_MAX;
-    }
-    else
-    {
-        /* 保持在范围内 */
-    }
-    s_duty = duty;
-    return s_duty;
-}
-
-/**
- * @brief  设置电频率并钳位
- * @param  elec_hz: 目标电频率
- * @retval 钳位后的实际值
- */
-float app_control_set_elec_hz(float elec_hz)
-{
-    if (elec_hz < APP_CONTROL_ELEC_HZ_MIN)
-    {
-        elec_hz = APP_CONTROL_ELEC_HZ_MIN;
-    }
-    else if (elec_hz > APP_CONTROL_ELEC_HZ_MAX)
-    {
-        elec_hz = APP_CONTROL_ELEC_HZ_MAX;
-    }
-    else
-    {
-        /* 保持在范围内 */
-    }
-    s_elec_hz = elec_hz;
-    return s_elec_hz;
+    s_started = 0u;
 }

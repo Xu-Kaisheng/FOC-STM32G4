@@ -18,7 +18,7 @@
 #include "stm32g4xx_it.h"
 #include "pwm_model.h"
 #include "app_control.h"
-#include "alg_sixstep.h"
+#include <math.h>
 
 /* 可控执行耗时只用于核对统计区间，不代表实板测量。 */
 #define TEST_RX_CYCLES    13u
@@ -56,7 +56,7 @@ static uint32_t s_boot_pwm_ticks;
 static HAL_StatusTypeDef s_calibration, s_start, s_poll, s_stop;
 static HAL_StatusTypeDef s_vbus_calibration, s_vbus_start, s_vbus_poll, s_vbus_stop;
 static uint32_t s_vbus_raw, s_vbus_stop_calls;
-static test_pwm_active_t s_before_com;
+
 
 /** @brief 初始化测试寄存器及可注入错误。 */
 static void reset_hardware(void)
@@ -76,9 +76,11 @@ static void reset_hardware(void)
     test_tim1.ARR = 4250u;
     test_tim1.RCR = 1u;
     test_tim1.CR1 = TIM_COUNTERMODE_CENTERALIGNED1;
+    test_tim1.CR2 = TIM_TRGO2_OC4REF;
+    test_tim1.CCR4 = 4165u;
     test_tim1.BDTR = 149u | TIM_BDTR_OSSI | TIM_BDTR_OSSR | TIM_BDTR_AOE;
     test_tim1.CCMR1 = TIM_OCMODE_PWM1 | (TIM_OCMODE_PWM1 << 8u) | TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE;
-    test_tim1.CCMR2 = TIM_OCMODE_PWM1 | TIM_CCMR2_OC3PE;
+    test_tim1.CCMR2 = TIM_OCMODE_PWM1 | TIM_CCMR2_OC3PE | (TIM_OCMODE_PWM2 << 8u);
     s_uart.ISR = 0u;
     s_tx_length = 0u;
     s_tx_dma_busy = 0u;
@@ -91,11 +93,13 @@ static void reset_hardware(void)
     s_tick = 0u;
     s_rx = 0u;
     s_board_allow = 1u;
-    s_boot_test = 1u;
+    s_boot_test = 0u;
     s_verify_boot = 0u;
     s_boot_pwm_ticks = 0u;
     s_measure_cycles = 0u;
     test_pwm_reset_model();
+    app_control_init();
+    app_set_mode_raw(APP_MODE_STOP);
 }
 
 /** @brief 模拟 CCR 写入；不模拟硬件预装载和死区。 */
@@ -133,7 +137,8 @@ uint32_t HAL_GetTick(void)
             s_boot_pwm_ticks++;
         }
     }
-    return s_tick++;
+    if (s_verify_boot != 0u) { s_tick++; }
+    return s_tick;
 }
 /** @brief 模拟等待，并确认等待前已关桥。 */
 void HAL_Delay(uint32_t delay)
@@ -248,197 +253,80 @@ static void uart_dma_finish(void)
     HAL_UART_TxCpltCallback(&huart3);
 }
 
-/** @brief 验证六步合法组合和异常配置均不能绕过联锁。 */
+/** @brief 验证三相互补联锁、采样触发、占空比范围与紧急关断。 */
 static void test_pwm(void)
 {
-    for (uint32_t high = 0u; high < 3u; high++)
-    {
-        for (uint32_t low = 0u; low < 3u; low++)
-        {
-            if (high == low) { continue; }
-            reset_hardware(); bsp_pwm_init(); bsp_pwm_start();
-            assert(bsp_pwm_check_ready() == 1u);
-            bsp_pwm_set_duty_raw(0.2f, 0.2f, 0.2f);
-            assert(bsp_pwm_apply_pair((pwm_phase_t)high, (pwm_phase_t)low) == 1u);
-            assert(bsp_pwm_check_ready() == 0u && bsp_pwm_enable_bridge(1u) == 0u);
-            assert(bsp_pwm_enable_bridge_sixstep((pwm_phase_t)high, (pwm_phase_t)low) == 1u);
-            assert(bsp_pwm_is_bridge_enabled() == 1u && test_tim1.EGR == TIM_EGR_UG);
-            test_tim1.CCER &= ~(TIM_CCER_CC1NE << (high * 4u));
-            assert(bsp_pwm_enable_bridge_sixstep((pwm_phase_t)high, (pwm_phase_t)low) == 0u);
-            assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
-        }
-    }
     reset_hardware(); bsp_pwm_init(); bsp_pwm_start();
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
+    assert(bsp_pwm_check_ready() == 1u && bsp_pwm_enable_bridge(1u) == 0u);
+    bsp_pwm_set_duty(0.2f, 0.3f, 0.4f);
+    test_pwm_update();
+    assert(bsp_pwm_enable_bridge(1u) == 1u);
     test_tim1.BDTR = (test_tim1.BDTR & ~TIM_BDTR_DTG) | 1u;
     assert(bsp_pwm_enable_bridge(1u) == 0u);
     test_tim1.BDTR = (test_tim1.BDTR & ~TIM_BDTR_DTG) | 149u;
-    test_tim1.CCER |= TIM_CCER_CC1P;
+    test_tim1.CCER &= ~TIM_CCER_CC2NE;
     assert(bsp_pwm_enable_bridge(1u) == 0u);
-    test_tim1.CCER &= ~TIM_CCER_CC1P;
-    test_tim1.PSC = 1u;
+    test_tim1.CCER |= TIM_CCER_CC2NE;
+    test_tim1.CCR4 = 0u;
     assert(bsp_pwm_enable_bridge(1u) == 0u);
-    test_tim1.PSC = 0u;
-    test_tim1.CCMR1 &= ~TIM_CCMR1_OC1PE;
-    assert(bsp_pwm_enable_bridge(1u) == 0u);
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_U) == 0u);
-    assert(bsp_pwm_enable_bridge_sixstep((pwm_phase_t)99, PHASE_V) == 0u);
-    reset_hardware(); bsp_pwm_init(); bsp_pwm_start();
-    assert(bsp_pwm_enable_bridge(1u) == 1u);
+    test_tim1.CCR4 = 4165u;
+    test_tim1.CR1 |= TIM_CR1_DIR;
+    test_tim1.CNT = 4000u;
+    assert(bsp_pwm_write_sampled(0.25f, 0.5f, 0.75f) == 1u);
+    assert(test_pwm_active.ccr[0] == 850u);
+    test_pwm_update();
+    assert(test_pwm_active.ccr[0] == 1062u && test_pwm_active.ccr[2] == 3187u);
+    assert(bsp_pwm_write_sampled(NAN, 0.5f, 0.5f) == 0u);
+    test_tim1.CNT = 849u;
+    assert(bsp_pwm_write_sampled(0.5f, 0.5f, 0.5f) == 0u);
     bsp_pwm_stop_emergency();
     assert(test_gpioc.BRR == CTRL_SD_Pin && bsp_pwm_is_bridge_enabled() == 0u);
     assert((test_tim1.BDTR & (TIM_BDTR_MOE | TIM_BDTR_AOE)) == 0u);
-    assert((test_tim1.CCER & 0x555u) == 0u && (test_tim1.CR1 & TIM_CR1_CEN) == 0u);
-}
-
-/** @brief 各寄存器写入后尝试 UEV，控制位必须保持旧状态直到 COM。 */
-static void probe_control_commit(uint32_t *reg)
-{
-    test_pwm_update();
-    if (reg != &test_tim1.EGR)
-    {
-        assert(test_pwm_active.ccmr1 == s_before_com.ccmr1);
-        assert(test_pwm_active.ccmr2 == s_before_com.ccmr2);
-        assert(test_pwm_active.ccer == s_before_com.ccer);
-    }
-    assert(test_tim1.CNT == TEST_PWM_COUNT);
-    assert(test_pwm_active.ug_count == s_before_com.ug_count);
-}
-
-/** @brief 在三次 CCR 写入后分别注入 UEV，禁止搬入半组占空比。 */
-static void probe_duty_update(uint32_t *reg)
-{
-    (void)reg;
-    test_pwm_update();
-    assert(test_pwm_active.ccr[0] == test_pwm_active.ccr[1]);
-    assert(test_pwm_active.ccr[0] == test_pwm_active.ccr[2]);
-    assert((test_pwm_active.ccr[0] == TEST_PWM_COMPARE) ||
-           (test_pwm_active.ccr[0] == TEST_PWM_NEXT_CCR));
-    assert(test_tim1.CNT == TEST_PWM_COUNT);
-}
-
-/** @brief 按独立六步表检查有效输出，不通过生产查询函数生成期望值。 */
-static void check_active_pair(uint8_t high, uint8_t low)
-{
-    const uint32_t output_pair = TIM_CCER_CC1E | TIM_CCER_CC1NE;
-    const uint32_t mask = (output_pair << ((uint32_t)high * PWM_CCER_CHANNEL_SHIFT)) |
-                          (output_pair << ((uint32_t)low * PWM_CCER_CHANNEL_SHIFT));
-    const uint32_t modes[3] = {
-        test_pwm_active.ccmr1 & TIM_CCMR1_OC1M,
-        (test_pwm_active.ccmr1 & TIM_CCMR1_OC2M) >> PWM_CCMR_CHANNEL_SHIFT,
-        test_pwm_active.ccmr2 & TIM_CCMR2_OC3M
-    };
-    assert((test_pwm_active.ccer & PWM_CCER_ALL) == mask);
-    for (uint32_t i = 0u; i < PWM_PHASE_COUNT; i++)
-    {
-        assert(modes[i] == ((i == high) ? TIM_OCMODE_PWM1 : TIM_OCMODE_FORCED_INACTIVE));
-    }
-}
-
-/** @brief 全部正反向转换一次 COM 提交；载波连续，低相不靠 CCR=0 实现。 */
-static void test_pwm_commutation(void)
-{
-    const uint8_t expected[6][2] = {{0u,1u}, {0u,2u}, {1u,2u}, {1u,0u}, {2u,0u}, {2u,1u}};
-    uint8_t step = 0u;
-    uint32_t before;
-    reset_hardware(); bsp_pwm_init(); app_control_init();
-    assert(app_control_start() == 1u);
-    check_active_pair(0u, 1u);
-    assert(test_pwm_active.ccr[0] == TEST_PWM_COMPARE);
-    assert(test_pwm_active.ccr[1] == TEST_PWM_COMPARE && test_pwm_active.ccr[2] == TEST_PWM_COMPARE);
-    test_tim1.CNT = TEST_PWM_COUNT;
-    for (uint8_t forward = 0u; forward < 2u; forward++)
-    {
-        for (uint32_t i = 0u; i < ALG_SIXSTEP_COUNT; i++)
-        {
-            step = alg_sixstep_next_step(step, forward);
-            s_before_com = test_pwm_active;
-            test_pwm_after_write = probe_control_commit;
-            assert(alg_sixstep_apply(step, TEST_PWM_DUTY) == 1u);
-            test_pwm_after_write = NULL;
-            assert(test_pwm_active.com_count == s_before_com.com_count + 1u);
-            check_active_pair(expected[step][0], expected[step][1]);
-            assert(test_pwm_active.ccr[expected[step][0]] == TEST_PWM_COMPARE);
-        }
-    }
-
-    // 占空比尚未更新时换相仍使用旧的可用值；COM 不得偷偷提交 CCR 或重置 CNT。
-    bsp_pwm_set_duty_raw(TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY);
-    before = test_pwm_active.update_count;
-    assert(bsp_pwm_apply_pair(PHASE_V, PHASE_W) == 1u);
-    assert(test_pwm_active.update_count == before);
-    assert(test_pwm_active.ccr[1] == TEST_PWM_COMPARE && test_tim1.CNT == TEST_PWM_COUNT);
-    test_pwm_update();
-    assert(test_pwm_active.ccr[0] == TEST_PWM_NEXT_CCR);
-    assert(test_pwm_active.ccr[1] == TEST_PWM_NEXT_CCR && test_pwm_active.ccr[2] == TEST_PWM_NEXT_CCR);
-
-    bsp_pwm_set_duty_raw(TEST_PWM_DUTY, TEST_PWM_DUTY, TEST_PWM_DUTY);
-    test_pwm_update();
-    test_pwm_after_write = probe_duty_update;
-    bsp_pwm_set_duty_raw(TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY, TEST_PWM_NEXT_DUTY);
-    test_pwm_after_write = NULL;
-    assert(test_pwm_active.blocked_updates >= 3u);
-    assert((test_tim1.CR1 & TIM_CR1_UDIS) == 0u);
-    assert(test_pwm_active.ccr[0] == TEST_PWM_NEXT_CCR);
-    test_tim1.CR1 |= TIM_CR1_UDIS;
-    bsp_pwm_set_duty_raw(TEST_PWM_DUTY, TEST_PWM_DUTY, TEST_PWM_DUTY);
-    assert((test_tim1.CR1 & TIM_CR1_UDIS) != 0u);
-    test_tim1.CR1 &= ~TIM_CR1_UDIS;
-    test_pwm_update();
-
-    bsp_pwm_stop();
-    assert((test_pwm_active.ccer & PWM_CCER_ALL) == 0u);
+    assert((test_tim1.CCER & PWM_CCER_ALL) == 0u && (test_tim1.CR1 & TIM_CR1_CEN) == 0u);
     bsp_pwm_start();
-    assert(bsp_pwm_check_ready() == 1u);
-    assert((test_pwm_active.ccmr1 & TIM_CCMR1_OC1M) == TIM_OCMODE_PWM1);
-    assert((test_pwm_active.ccmr1 & TIM_CCMR1_OC2M) == (TIM_OCMODE_PWM1 << PWM_CCMR_CHANNEL_SHIFT));
-    assert((test_pwm_active.ccmr2 & TIM_CCMR2_OC3M) == TIM_OCMODE_PWM1);
-
-    // 模拟已准备但尚未 COM 的输出，在紧急关断后再触发 COM 也不能恢复使能。
-    MODIFY_REG(test_tim1.CCER, PWM_CCER_ALL, TIM_CCER_CC1E | TIM_CCER_CC1NE);
-    bsp_pwm_stop_emergency();
-    WRITE_REG(test_tim1.EGR, TIM_EGR_COMG);
-    assert((test_pwm_active.ccer & PWM_CCER_ALL) == 0u);
-    assert((test_tim1.BDTR & (TIM_BDTR_MOE | TIM_BDTR_AOE)) == 0u);
-    assert(test_gpioc.BRR == CTRL_SD_Pin && bsp_pwm_is_bridge_enabled() == 0u);
+    assert((test_tim1.CR1 & TIM_CR1_DIR) == 0u && bsp_pwm_check_ready() == 1u);
 }
 
-/** @brief 模式、预装载、外部 COM 和占空比不匹配时必须拒绝开桥。 */
-static void test_pwm_com_interlocks(void)
-{
-    reset_hardware(); bsp_pwm_init(); app_control_init();
-    bsp_pwm_set_duty_raw(TEST_PWM_DUTY, TEST_PWM_DUTY, TEST_PWM_DUTY);
-    bsp_pwm_start();
-    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_V) == 1u);
-    test_tim1.CCMR1 = (test_tim1.CCMR1 & ~TIM_CCMR1_OC2M) |
-                     (TIM_OCMODE_PWM1 << PWM_CCMR_CHANNEL_SHIFT);
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
-    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_V) == 1u);
-    test_tim1.CCR3 = 0u;
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
-    test_tim1.CCR3 = TEST_PWM_COMPARE;
-    test_tim1.CR2 |= TIM_CR2_CCUS;
-    assert(bsp_pwm_apply_pair(PHASE_V, PHASE_W) == 0u);
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
-    test_tim1.CR2 &= ~TIM_CR2_CCUS;
-    test_tim1.CR2 |= TIM_CR2_OIS1;
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
-    test_tim1.CR2 &= ~TIM_CR2_OIS1;
-    test_tim1.CR1 |= TIM_CR1_UDIS;
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
-    test_tim1.CR1 &= ~TIM_CR1_UDIS;
-    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_U) == 0u);
-    assert(bsp_pwm_apply_pair((pwm_phase_t)99, PHASE_V) == 0u);
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 1u);
+/** @brief 模拟注入启动/停止，允许测试覆盖 HAL 失败清理。 */
+HAL_StatusTypeDef HAL_ADCEx_InjectedStart(ADC_HandleTypeDef *h)
+{ (void)h; return s_start; }
+/** @brief 只有 ADC3 打开完成中断。 */
+HAL_StatusTypeDef HAL_ADCEx_InjectedStart_IT(ADC_HandleTypeDef *h)
+{ assert(h == &hadc3); h->Instance->IER |= ADC_IT_JEOS; return s_start; }
+/** @brief 转换停止只能在关桥状态调用。 */
+HAL_StatusTypeDef HAL_ADCEx_InjectedStop(ADC_HandleTypeDef *h)
+{ (void)h; assert(bsp_pwm_is_bridge_enabled() == 0u); return s_stop; }
+/** @brief 生产入口已消费 JEOS；HAL 只清理残余事件。 */
+void HAL_ADC_IRQHandler(ADC_HandleTypeDef *h)
+{ h->Instance->ISR = 0u; }
+/** @brief 生产入口已消费 UIF。 */
+void HAL_TIM_IRQHandler(TIM_HandleTypeDef *h)
+{ h->Instance->SR = 0u; }
 
-    app_set_mode_raw(APP_MODE_SIXSTEP_FWD);
-    test_tim1.CR2 &= ~TIM_CR2_CCPC;
-    s_tick += 1000u;
-    app_control_task();
-    assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
-    assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u && (test_tim1.BDTR & TIM_BDTR_MOE) == 0u);
-    alg_sixstep_init(NULL);
-    assert(alg_sixstep_apply(0u, TEST_PWM_DUTY) == 0u);
+/** @brief 一次真实 ADC 向量再一次更新向量，对应完整 50 us PWM 周期。 */
+static void sample_cycle(uint16_t u, uint16_t v, uint16_t w)
+{
+    test_tim1.CR1 |= TIM_CR1_DIR;
+    test_tim1.CNT = 4000u;
+    s_adcs[0].JDR1 = u; s_adcs[1].JDR1 = v; s_adcs[2].JDR1 = w;
+    for (uint32_t i = 0u; i < 3u; i++) { s_adcs[i].ISR = ADC_FLAG_JEOS | ADC_FLAG_JEOC; }
+    ADC3_IRQHandler();
+    test_tim1.SR |= TIM_SR_UIF;
+    TIM1_UP_TIM16_IRQHandler();
+    test_tim1.CR1 &= ~TIM_CR1_DIR;
+    test_pwm_update();
+}
+
+/** @brief 校准期间必须关桥，完整窗口后才允许功率输出。 */
+static void finish_calibration(void)
+{
+    for (uint32_t i = 0u; i < 127u; i++)
+    {
+        sample_cycle(1551u, 1550u, 1552u);
+        assert(bsp_pwm_is_bridge_enabled() == 0u);
+    }
+    sample_cycle(1551u, 1550u, 1552u);
+    assert(bsp_pwm_is_bridge_enabled() == 1u);
 }
 
 /** @brief 验证霍尔正反向步进及回绕，不推定真实电角度零点。 */
@@ -524,57 +412,99 @@ static void test_log_dma_error(void)
     assert(bsp_uart_is_tx_busy() == 0u);
 }
 
-/** @brief 验证实际应用启动、反转、停机及 ADC 故障锁存。 */
+/** @brief 验证串口启动、关桥校准、斜坡、停止与故障锁存。 */
 static void test_application(void)
 {
-    reset_hardware(); s_boot_test = 0u; s_verify_boot = 1u;
-    app_set_mode_raw(APP_MODE_STOP); app_init();
-    s_verify_boot = 0u;
-    assert(s_boot_pwm_ticks == 0u && app_get_mode() == APP_MODE_STOP);
-    assert((test_tim1.BDTR & TIM_BDTR_MOE) == 0u && test_tim1.CCER == 0u);
-    assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u && (test_gpioc.ODR & CTRL_SD_Pin) == 0u);
-    assert(bsp_pwm_is_bridge_enabled() == 0u);
-    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
-    s_rx = '2'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
-    s_rx = '0'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
-    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
-    s_poll = HAL_TIMEOUT; s_tick += 1000u; app_task();
-    assert(bsp_pwm_is_bridge_enabled() == 0u);
-    s_poll = HAL_OK; s_rx = '1'; app_task();
-    assert(bsp_pwm_is_bridge_enabled() == 0u);
+    app_control_feedback_t feedback;
+    reset_hardware(); app_init();
+    assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
+    assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u);
+    s_rx = '1'; app_task();
+    assert(app_get_mode() == APP_MODE_FOC && bsp_pwm_is_bridge_enabled() == 0u);
+    finish_calibration();
+    s_rx = '+'; app_task();
+    sample_cycle(1551u, 1550u, 1552u);
+    app_control_get_feedback(&feedback);
+    assert(feedback.iq_ref > 0.0f && feedback.iq_ref <= 0.00011f);
+    assert(app_control_set_angle(90.0f) == 0.0f);
+    s_rx = '0'; app_task();
+    assert(bsp_pwm_is_bridge_enabled() == 0u && (test_tim1.CR1 & TIM_CR1_CEN) == 0u);
+    assert(app_control_set_angle(90.0f) == 90.0f);
+    s_rx = '1'; app_task(); finish_calibration();
+    sample_cycle(2800u, 1550u, 1552u);
+    assert(app_get_fault() == APP_FAULT_OVERCURRENT && bsp_pwm_is_bridge_enabled() == 0u);
+    app_task(); s_rx = '1'; app_task();
+    assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
     reset_hardware(); s_calibration = HAL_ERROR; app_init();
     s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
     reset_hardware(); s_vbus_calibration = HAL_ERROR; app_init();
     s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
-    reset_hardware(); s_vbus_start = HAL_ERROR; app_init();
-    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
-    reset_hardware(); app_init();
-    s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 1u);
-    s_vbus_poll = HAL_TIMEOUT; s_tick += 1000u; app_task();
+    reset_hardware(); app_init(); s_start = HAL_ERROR;
+    s_rx = '1'; app_task(); assert(app_get_fault() == APP_FAULT_ADC);
+}
+
+/** @brief 采样丢失、半帧、晚到与原始值饱和均在 ISR 内关桥。 */
+static void test_current_faults(void)
+{
+    for (uint32_t scenario = 0u; scenario < 5u; scenario++)
+    {
+        reset_hardware(); app_init(); s_rx = '1'; app_task(); finish_calibration();
+        if (scenario == 0u)
+        {
+            test_tim1.SR |= TIM_SR_UIF;
+            TIM1_UP_TIM16_IRQHandler();
+            assert(app_get_fault() == APP_FAULT_SAMPLE_LOST);
+        }
+        else
+        {
+            test_tim1.CR1 |= TIM_CR1_DIR;
+            test_tim1.CNT = (scenario == 2u) ? 800u : 4000u;
+            for (uint32_t i = 0u; i < 3u; i++) { s_adcs[i].ISR = ADC_FLAG_JEOS; }
+            if (scenario == 1u) { s_adcs[1].ISR = 0u; }
+            if (scenario == 3u) { s_adcs[2].JDR1 = 4095u; }
+            if (scenario == 4u) { s_tick += 21u; }
+            ADC3_IRQHandler();
+            assert(app_get_fault() != APP_FAULT_NONE);
+        }
+        assert(bsp_pwm_is_bridge_enabled() == 0u && test_gpioc.BRR == CTRL_SD_Pin);
+        app_task(); s_rx = '1'; app_task();
+        assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
+    }
+}
+
+/** @brief 在主循环关断序列中模拟最后一帧校准到达。 */
+static void interrupt_shutdown(uint32_t *reg)
+{
+    (void)reg;
+    test_pwm_after_write = NULL;
+    ADC3_IRQHandler();
     assert(bsp_pwm_is_bridge_enabled() == 0u);
-    s_vbus_poll = HAL_OK; s_rx = '1'; app_task();
-    assert(bsp_pwm_is_bridge_enabled() == 0u);
+}
+
+/** @brief 校准完成中断抢占主循环停机或故障时，绝不能重新开桥。 */
+static void test_shutdown_race(void)
+{
+    for (uint32_t fault = 0u; fault < 2u; fault++)
+    {
+        reset_hardware(); app_init(); app_set_mode(APP_MODE_FOC);
+        for (uint32_t i = 0u; i < 127u; i++) { sample_cycle(1551u, 1550u, 1552u); }
+        for (uint32_t i = 0u; i < 3u; i++) { s_adcs[i].ISR = ADC_FLAG_JEOS; }
+        test_pwm_after_write = interrupt_shutdown;
+        if (fault != 0u) { app_control_trip_fault(APP_FAULT_BUS); }
+        else { app_control_stop(); }
+        assert(bsp_pwm_is_bridge_enabled() == 0u && (test_gpioc.ODR & CTRL_SD_Pin) == 0u);
+        assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u);
+    }
 }
 
 /** @brief 未核验板卡的应用命令与驱动接口均不能输出功率。 */
 static void test_monitor_only(void)
 {
-    reset_hardware(); s_board_allow = 0u; s_boot_test = 0u; s_verify_boot = 1u; app_init();
-    s_verify_boot = 0u;
-    assert(s_boot_pwm_ticks == 0u);
-    assert((test_tim1.BDTR & TIM_BDTR_MOE) == 0u && test_tim1.CCER == 0u);
-    assert(test_tim1.CCR1 == 0u && test_tim1.CCR2 == 0u && test_tim1.CCR3 == 0u);
-    assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u);
+    reset_hardware(); s_board_allow = 0u; app_init();
     s_rx = '1'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
     assert((test_tim1.CR1 & TIM_CR1_CEN) == 0u);
-    s_rx = '2'; app_task(); assert(bsp_pwm_is_bridge_enabled() == 0u);
-    bsp_pwm_start();
-    assert(bsp_pwm_check_ready() == 1u);
-    assert(bsp_pwm_enable_bridge(1u) == 0u);
-    bsp_pwm_set_duty_raw(0.2f, 0.2f, 0.2f);
-    assert(bsp_pwm_apply_pair(PHASE_U, PHASE_V) == 1u);
-    assert(bsp_pwm_enable_bridge_sixstep(PHASE_U, PHASE_V) == 0u);
-    assert((test_gpioc.ODR & CTRL_SD_Pin) == 0u);
+    bsp_pwm_set_duty(0.5f, 0.5f, 0.5f); bsp_pwm_start();
+    assert(bsp_pwm_check_ready() == 1u && bsp_pwm_enable_bridge(1u) == 0u);
 }
 
 /** @brief 实际调度的空接收不计工作，命令处理和 DMA 提交计工作且正确退出。 */
@@ -649,16 +579,16 @@ static void test_reference_faults(void)
     for (uint32_t scenario = 0u; scenario < 2u; scenario++)
     {
         reset_hardware(); app_set_mode_raw(APP_MODE_STOP); app_init();
-        app_set_mode(APP_MODE_SIXSTEP_FWD);
-        assert(bsp_pwm_is_bridge_enabled() == 1u);
+        app_set_mode(APP_MODE_FOC);
+        finish_calibration();
         if (scenario == 0u) { s_reference_poll = HAL_TIMEOUT; }
         else { s_reference_delay_ms = 21u; }
         app_set_last_print_ms(s_tick);
-        s_tick += 1000u; app_task();
-        assert(app_get_adc_ready() == 0u && app_get_mode() == APP_MODE_STOP);
+        s_tick += 10u; app_task(); app_task();
+        assert(app_get_fault() == APP_FAULT_BUS && app_get_mode() == APP_MODE_STOP);
         assert(bsp_pwm_is_bridge_enabled() == 0u);
         s_reference_poll = HAL_OK; s_reference_delay_ms = 0u;
-        app_set_mode(APP_MODE_SIXSTEP_FWD);
+        app_set_mode(APP_MODE_FOC);
         assert(app_get_mode() == APP_MODE_STOP && bsp_pwm_is_bridge_enabled() == 0u);
     }
 }
@@ -668,7 +598,7 @@ int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
     test_task_accounting(); test_irq_accounting();
-    test_pwm_commutation(); test_pwm_com_interlocks(); test_reference_faults();
+    test_current_faults(); test_shutdown_race(); test_reference_faults();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
 }

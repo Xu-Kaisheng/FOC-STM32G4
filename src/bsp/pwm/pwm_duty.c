@@ -15,8 +15,7 @@
 /* 占空比钳位：
  * 上限 92%：给三电阻电流采样留窗口，同时保证 IR2110 自举电容能充电；
  * 下限 5%：避免极小占空比时 1 us 死区把脉宽吃光。 */
-#define PWM_DUTY_MIN      0.05f
-#define PWM_DUTY_MAX      0.92f
+/* 限幅值由 pwm.h 统一声明。 */
 
 /* ---------------- internal ---------------- */
 
@@ -82,7 +81,7 @@ void bsp_pwm_set_duty(float du, float dv, float dw)
 /**
  * @brief  设置三相占空比（允许初始化时清零）
  * @param  du/dv/dw: 0.0~1.0
- * @note   两相驱动时三相写相同占空比；低相常通与悬空通过模式和使能控制。
+ * @note   仅供关桥初始化使用。
  */
 void bsp_pwm_set_duty_raw(float du, float dv, float dw)
 {
@@ -92,4 +91,23 @@ void bsp_pwm_set_duty_raw(float du, float dv, float dw)
     d[PHASE_V] = ((dv < 0.0f) ? 0.0f : ((dv > PWM_DUTY_MAX) ? PWM_DUTY_MAX : dv));
     d[PHASE_W] = ((dw < 0.0f) ? 0.0f : ((dw > PWM_DUTY_MAX) ? PWM_DUTY_MAX : dw));
     pwm_write_ccr3(d);
+}
+
+/** @brief 在距离下溢至少 5 us 时提交；电流 ISR 是运行时唯一 CCR 写入者。 */
+uint8_t bsp_pwm_write_sampled(float du, float dv, float dw)
+{
+    const uint32_t guard_ticks = 850u; /* 170 MHz × 5 us，覆盖三次写入及返回。 */
+    if (((TIM1->CR1 & (TIM_CR1_CEN | TIM_CR1_DIR)) != (TIM_CR1_CEN | TIM_CR1_DIR)) ||
+        (TIM1->CNT < guard_ticks) ||
+        !(du >= PWM_DUTY_MIN && du <= PWM_DUTY_MAX) ||
+        !(dv >= PWM_DUTY_MIN && dv <= PWM_DUTY_MAX) ||
+        !(dw >= PWM_DUTY_MIN && dw <= PWM_DUTY_MAX))
+    {
+        return 0u;
+    }
+    // 固定窗口内三次写入不会跨越下溢；不屏蔽 UEV，采样看门狗不会被推迟。
+    WRITE_REG(TIM1->CCR1, (uint32_t)(du * PWM_ARR));
+    WRITE_REG(TIM1->CCR2, (uint32_t)(dv * PWM_ARR));
+    WRITE_REG(TIM1->CCR3, (uint32_t)(dw * PWM_ARR));
+    return 1u;
 }

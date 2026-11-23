@@ -17,6 +17,8 @@
 #define BOARD_ADC_VREF_MIN_MV 2700u
 #define BOARD_ADC_VREF_MAX_MV 3600u
 #define BOARD_MV_PER_V 1000.0f
+/* 载波峰值前 0.5 us 触发，OC4REF 高电平宽 1 us，足够跨 ADC 时钟域。 */
+#define BOARD_PWM_SAMPLE_ADVANCE_TICKS 85u
 
 /* ---------------- read ---------------- */
 

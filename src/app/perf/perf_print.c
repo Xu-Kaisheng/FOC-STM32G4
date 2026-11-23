@@ -1,7 +1,7 @@
 /** @file perf_print.c
  *  @brief 每秒一次的性能日志格式化输出
  *
- * 打印策略属于应用层：BSP 只负责把字节送出去，不再认识 SIXSTEP/CURRENT
+ * 打印策略属于应用层：BSP 只负责把字节送出去，不再认识 CURRENT
  * 这类业务分类。调用 app_log_write 是向下调用，不构成依赖环。
  */
 #include "perf.h"
@@ -63,7 +63,6 @@ void app_perf_task(void)
                     (double)(sample.elapsed_cycles - sample.work_cycles) * PERF_MS_PER_SECOND / sample.clock_hz,
                     (double)sample.irq_cycles * PERF_MS_PER_SECOND / sample.clock_hz,
                     (double)sample.elapsed_cycles * PERF_MS_PER_SECOND / sample.clock_hz);
-    print_control(&sample, APP_PERF_SIXSTEP, "SIXSTEP");
     print_control(&sample, APP_PERF_CURRENT, "CURRENT");
     app_perf_end_work();
 }

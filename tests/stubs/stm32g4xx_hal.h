@@ -7,9 +7,9 @@
 typedef enum { HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT } HAL_StatusTypeDef;
 typedef enum { GPIO_PIN_RESET, GPIO_PIN_SET } GPIO_PinState;
 typedef struct { uint32_t IDR, ODR, BRR; } GPIO_TypeDef;
-typedef struct { uint32_t CR1, CR2, CCER, BDTR, ARR, PSC, RCR, CCMR1, CCMR2, CNT, EGR, CCR1, CCR2, CCR3; } TIM_TypeDef;
+typedef struct { uint32_t CR1, CR2, CCER, BDTR, ARR, PSC, RCR, CCMR1, CCMR2, CNT, EGR, CCR1, CCR2, CCR3, CCR4, DIER, SR; } TIM_TypeDef;
 typedef struct { TIM_TypeDef *Instance; } TIM_HandleTypeDef;
-typedef struct { uint32_t DR; } ADC_TypeDef;
+typedef struct { uint32_t DR, ISR, IER, JDR1; } ADC_TypeDef;
 typedef struct { ADC_TypeDef *Instance; } ADC_HandleTypeDef;
 typedef struct { uint32_t ISR, TDR; } USART_TypeDef;
 typedef struct { USART_TypeDef *Instance; uint32_t ErrorCode; } UART_HandleTypeDef;
@@ -27,6 +27,25 @@ extern TIM_TypeDef test_tim1;
 #define TIM_CHANNEL_2 4u
 #define TIM_CHANNEL_3 8u
 #define TIM_CR1_CEN 1u
+#define TIM_CR1_DIR 0x10u
+#define TIM_CR2_MMS2 0xf00000u
+#define TIM_TRGO2_OC4REF 0x700000u
+#define TIM_CCMR2_CC4S 0x300u
+#define TIM_CCMR2_OC4M 0x1007000u
+#define TIM_OCMODE_PWM2 0x70u
+#define TIM_DIER_UIE 1u
+#define TIM_SR_UIF 1u
+#define TIM_FLAG_UPDATE TIM_SR_UIF
+#define __HAL_TIM_CLEAR_FLAG(h, f) ((h)->Instance->SR &= ~(f))
+#define ADC_FLAG_JEOS 0x40u
+#define ADC_FLAG_JEOC 0x20u
+#define ADC_FLAG_JQOVF 0x400u
+#define ADC_IT_JEOS ADC_FLAG_JEOS
+#define ADC_IT_JEOC ADC_FLAG_JEOC
+#define ADC_IT_JQOVF ADC_FLAG_JQOVF
+#define __HAL_ADC_CLEAR_FLAG(h, f) ((h)->Instance->ISR &= ~(f))
+#define __HAL_ADC_DISABLE_IT(h, f) ((h)->Instance->IER &= ~(f))
+#define __DMB() ((void)0)
 #define TIM_CR1_UDIS 2u
 #define TIM_CR2_CCPC 1u
 #define TIM_CR2_CCUS 4u
@@ -99,6 +118,11 @@ uint32_t HAL_GetTick(void);
 void HAL_Delay(uint32_t delay);
 void HAL_IncTick(void);
 void HAL_DMA_IRQHandler(DMA_HandleTypeDef *h);
+void HAL_ADC_IRQHandler(ADC_HandleTypeDef *h);
+void HAL_TIM_IRQHandler(TIM_HandleTypeDef *h);
+HAL_StatusTypeDef HAL_ADCEx_InjectedStart(ADC_HandleTypeDef *h);
+HAL_StatusTypeDef HAL_ADCEx_InjectedStart_IT(ADC_HandleTypeDef *h);
+HAL_StatusTypeDef HAL_ADCEx_InjectedStop(ADC_HandleTypeDef *h);
 void HAL_UART_IRQHandler(UART_HandleTypeDef *h);
 HAL_StatusTypeDef HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *h, uint32_t mode);
 HAL_StatusTypeDef HAL_ADC_Start(ADC_HandleTypeDef *h);

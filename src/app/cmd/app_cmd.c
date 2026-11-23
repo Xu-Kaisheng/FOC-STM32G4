@@ -10,9 +10,8 @@
 #include "uart.h"
 
 /* 命令每次调整的步长与显示比例；安全范围由 app_control_set_* 负责钳位。 */
-#define APP_DUTY_STEP      0.05f
-#define APP_FREQ_SCALE     1.5f
-#define APP_PERCENT_SCALE  100.0f
+#define APP_CURRENT_STEP_A 0.1f
+#define APP_ANGLE_STEP_DEG 15.0f
 
 /* ---------------- internal ---------------- */
 
@@ -29,11 +28,7 @@ static void handle_command(uint8_t c)
             break;
 
         case '1':
-            app_set_mode(APP_MODE_SIXSTEP_FWD);
-            break;
-
-        case '2':
-            app_set_mode(APP_MODE_SIXSTEP_REV);
+            app_set_mode(APP_MODE_FOC);
             break;
 
         case 'h':
@@ -41,42 +36,41 @@ static void handle_command(uint8_t c)
             break;
 
         case '+':
+        case '-':
         {
-            float duty = app_control_set_duty(app_control_get_duty() + APP_DUTY_STEP);
-            app_log_write("[DUTY] %.0f%%\r\n", (double)(duty * APP_PERCENT_SCALE));
+            float delta = (c == '+') ? APP_CURRENT_STEP_A : -APP_CURRENT_STEP_A;
+            float current = app_control_set_iq(app_control_get_iq() + delta);
+            app_log_write("[Iq] %.2f A\r\n", (double)current);
             break;
         }
 
-        case '-':
+        case ']':
+        case '[':
         {
-            float duty = app_control_set_duty(app_control_get_duty() - APP_DUTY_STEP);
-            app_log_write("[DUTY] %.0f%%\r\n", (double)(duty * APP_PERCENT_SCALE));
+            float delta = (c == ']') ? APP_CURRENT_STEP_A : -APP_CURRENT_STEP_A;
+            float current = app_control_set_id(app_control_get_id() + delta);
+            app_log_write("[Id] %.2f A\r\n", (double)current);
             break;
         }
 
         case '>':
-        {
-            float hz = app_control_set_elec_hz(app_control_get_elec_hz() * APP_FREQ_SCALE);
-            app_log_write("[FREQ] %.2f Hz\r\n", (double)hz);
-            break;
-        }
-
         case '<':
         {
-            float hz = app_control_set_elec_hz(app_control_get_elec_hz() / APP_FREQ_SCALE);
-            app_log_write("[FREQ] %.2f Hz\r\n", (double)hz);
+            float delta = (c == '>') ? APP_ANGLE_STEP_DEG : -APP_ANGLE_STEP_DEG;
+            float angle = app_control_set_angle(app_control_get_angle() + delta);
+            app_log_write("[ANGLE] %.0f deg (editable in STOP)\r\n", (double)angle);
             break;
         }
 
         case '?':
             app_log_write("\r\n-- STM32-FOC v0.1 --\r\n"
                             " 0 : stop\r\n"
-                            " 1 : six-step forward\r\n"
-                            " 2 : six-step reverse\r\n"
+                            " 1 : fixed-angle current loop\r\n"
                             " h : hall monitor\r\n");
             // 分成两条日志，避免帮助正文超过单条格式化缓冲区而被截断。
-            app_log_write(" +/- : duty +-5%%\r\n"
-                            " >/< : electrical freq x/÷1.5\r\n"
+            app_log_write(" +/- : Iq +-0.1 A\r\n"
+                            " ]/[ : Id +-0.1 A\r\n"
+                            " >/< : angle +-15 deg in STOP\r\n"
                             " ? : this help\r\n");
             break;
 

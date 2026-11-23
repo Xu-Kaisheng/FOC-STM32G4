@@ -30,7 +30,8 @@
                            TIM_CCER_CC3E | TIM_CCER_CC3NE)
 #define PWM_PHASE_COUNT          3u
 #define PWM_CCMR_CHANNEL_SHIFT   8u
-#define PWM_CCER_CHANNEL_SHIFT   4u
+#define PWM_DUTY_MIN             0.05f
+#define PWM_DUTY_MAX             0.92f
 
 /* ---------------- 公共类型 ---------------- */
 
@@ -63,6 +64,9 @@ uint8_t bsp_pwm_check_ready(void);
  */
 uint8_t bsp_pwm_is_bridge_enabled(void);
 
+/** @brief 读取并清除更新事件，供 TIM1 更新 ISR 使用。 */
+uint8_t bsp_pwm_read_update(void);
+
 /* ---------------- write ---------------- */
 
 /**
@@ -81,41 +85,30 @@ void bsp_pwm_stop(void);
  * @param  du: U 相占空比 0.0~1.0（= 上管导通比例）
  * @param  dv: V 相占空比
  * @param  dw: W 相占空比
- * @note   内部会钳位到 [PWM_DUTY_MIN, PWM_DUTY_MAX]；仅由主循环单一调用方写入。
+ * @note   内部会钳位到 [PWM_DUTY_MIN, PWM_DUTY_MAX]；运行中仅由 ADC ISR 写入。
  */
 void bsp_pwm_set_duty(float du, float dv, float dw);
 
 /**
  * @brief  设置三相占空比（不做 5% 下限钳位）
  * @param  du/dv/dw: 0.0~1.0
- * @note   允许初始化时清零；两相驱动时三相必须写同一非零占空比，低相由输出模式控制。
- *         仅由主循环单一调用方写入，三路通过 UDIS 成组预装载，下一次 UEV 生效。
+ * @note   允许关桥初始化时清零；运行期间使用同步写入接口。
  */
 void bsp_pwm_set_duty_raw(float du, float dv, float dw);
-
-/**
- * @brief  一次提交斩波相、低侧常通相与悬空相
- * @param  high/low: 两个不同的 PHASE_U / PHASE_V / PHASE_W
- * @retval 1 已产生 COM；0 参数或定时器状态无效，调用方必须关桥停机
- * @note   三相 CCR 须提前装入有效占空比；本接口不提交 CCR、不重置 CNT。
- *         仅主循环调用，禁止与其他输出配置写入者并发。
- */
-uint8_t bsp_pwm_apply_pair(pwm_phase_t high, pwm_phase_t low);
 
 /**
  * @brief  控制驱动板 H 桥总开关
  * @param  enable: 1 使能（CTRL_SD 拉高），0 关断
  * @retval 1 成功；0 联锁拒绝且已关桥
- * @note   开桥要求三相全部成对使能；六步模式使用专用接口。
+ * @note   开桥要求三相全部成对使能及占空比有效，不产生 UG。
  */
 uint8_t bsp_pwm_enable_bridge(uint8_t enable);
 
-/**
- * @brief  六步模式开桥，检查指定两相成对使能及第三相悬空
- * @param  high/low: 当前高相与低相，必须是两个不同的有效相
- * @retval 1 成功；0 参数或联锁失败且已关桥
- */
-uint8_t bsp_pwm_enable_bridge_sixstep(pwm_phase_t high, pwm_phase_t low);
+/** @brief ADC ISR 在下降半周写入完整占空比；错过提交窗口返回 0。 */
+uint8_t bsp_pwm_write_sampled(float du, float dv, float dw);
+/** @brief 启停更新中断，作为独立于 ADC 的逐周期采样看门狗。 */
+void bsp_pwm_enable_update_irq(uint8_t enable);
+
 
 /* ---------------- hook ---------------- */
 
