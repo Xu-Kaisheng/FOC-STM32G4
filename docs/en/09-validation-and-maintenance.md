@@ -6,33 +6,41 @@ This page owns current capabilities, drive permission, commands and operating pa
 
 ## Capabilities and limits
 
-- Boot is STOP: CTRL_SD low, boot PWM self-test disabled. Explicit `1`/`2` commands start open-loop six-step operation only after ADC/PWM interlocks pass.
-- Commutation follows commanded electrical frequency. Hall input is monitoring only, not rotor-position feedback. No automatic alignment, acceleration ramp, current loop or speed loop; smooth low-speed tracking is not guaranteed.
-- Current acquisition is sequential software triggering; bus/VREF acquisition is separate. Status reports every 500 ms. Reference compensation: [10](10-bus-voltage-adc.md); performance accounting: [12](12-performance-monitoring.md).
-- The maintainer deferred the 8 A software limiter. No over/undervoltage, stall or loss-of-synchronism protection. Slow current reports and duty clamps are not current limiting.
-- ADC initialization/acquisition/freshness failures disable power and latch startup lockout until reset. PWM rejection returns STOP. Mode transitions stop power/PWM and wait 200 ms.
+- Boot enters STOP with CTRL_SD low. Command `1` starts fixed-electrical-angle Id/Iq control, first calibrating zero offsets with the bridge disabled, then enabling power. Synchronized acquisition and current control run at 20 kHz.
+- Hall provides monitoring while rotor-angle offset and direction await calibration. This stage supports stationary or controlled bench current commissioning. Speed control and continuous-rotation control remain pending.
+- Any phase reaching ±8 A, raw saturation, missing frame, PWM interlock failure or missed duty window immediately disables power and latches a fault. A phase-current sum exceeding 1 A for 3 consecutive frames also latches shutdown, as do bus range, freshness and VREF drift failures. Reset is required after faults. Command `0` stops operation.
+- An independent TIM1 update IRQ detects missing ADC frames. The main loop updates the bus and the current ISR checks freshness. Hardware overcurrent protection remains necessary. Verify analog saturation, polarity, worst-case ISR duration and control stability on hardware.
 
 ## UART commands
 
 UART setup/wiring: [01](01-hardware-and-wiring.md). Commands are single characters; no newline is required.
 
-| Command | Behavior |
+| Command | Action |
 |---|---|
-| `0` | Stop and disable bridge |
-| `1` / `2` | Forward / reverse six-step request; determine shaft direction by observation |
-| `h` | Bridge-off Hall transition monitoring |
-| `+` / `-` | Increase/decrease duty by 5 percentage points |
-| `>` / `<` | Multiply/divide electrical frequency by 1.5 |
+| `0` | Revoke permission, disable bridge, stop PWM and ADC |
+| `1` | Start synchronized sampling, then fixed-angle current control after zero calibration |
+| `h` | Disable power and monitor Hall changes |
+| `+` / `-` | Increase / decrease Iq reference by 0.1 A |
+| `]` / `[` | Increase / decrease Id reference by 0.1 A |
+| `>` / `<` | Change fixed electrical angle by ±15° while stopped, retaining the angle during operation |
 | `?` | Help |
 
-| Parameter | Value | Source |
+| Parameter | Setting | Source |
 |---|---|---|
-| Initial electrical frequency / range | 1 Hz / 0.5–20 Hz | `src/app/control/app_control.c` |
-| Initial duty / range | 20% / 5%–60% | Same source |
-| Bridge-off transition wait | 200 ms | `src/app/app/app.c` |
-| Command increments | 5 percentage points / frequency ratio 1.5 | `src/app/cmd/app_cmd.c` |
+| Default Id / Iq and per-axis range | 0 A, ±1 A | `src/app/control/app_current.c` |
+| Reference ramp | 0.0001 A per cycle, 2 A/s | Same |
+| Default fixed angle | 0°, wrapped at 360° | Same |
+| Initial PI gains | Kp=0.5 V/A, Ki×Ts=0.005 V/A | Same |
+| Per-axis voltage limit | ±1.4 V | Same |
+| Bus range / refresh / maximum age | 8–30 V / 10 ms / 20 ms | `src/app/control/app_control.c` |
+| Allowed VREF drift | ±50 mV relative to startup | Same |
+| Bridge-off wait | 200 ms | `src/app/app/app.c` |
 
-`1`/`2` preserve frequency/duty; reset restores defaults. Six steps form one electrical period, with approximately `1000/(6×f)` ms per step, subject to integer rounding and main-loop jitter. With two pole pairs, synchronous tracking gives `rpm=60×f/2`, or about 30 rpm by default. Logged f is a command, not measured speed. Half-second Hall snapshots skip transitions and cannot alone establish reversal.
+References and angle survive normal stop/start cycles. Each restart ramps from zero current. PI gains are commissioning defaults because phase resistance and inductance remain unmeasured. Limits apply independently to both axes. The commissioning range is separate from motor ratings.
+
+Fault codes follow `app_fault_t`. Code 1 covers ADC and zero calibration errors, 2 overcurrent, 3 PWM/modulation/computation deadlines, 4 missing frames, 5 bus/VREF faults, and 6 persistent current-sum errors. Calibration restarts its stable window after isolated spikes and is limited to 102.4 ms, with the bridge off throughout.
+
+Status and performance appear together once per second. `[FOC]` shows actual and ramped-reference Id/Iq and phase currents; raw, VBUS and VREF are omitted. STOP retains the last current snapshot, and `[FOC] OFF` indicates feedback is no longer updating during operation. `[CPU]` lists exclusive task and IRQ utilization separately; `POLL` includes polling and unassigned overhead, not sleeping idle time.
 
 ## Build and download
 
@@ -62,12 +70,8 @@ Check `Verify OK`, application startup and UART. Compilation does not establish 
 
 ## Regression and hardware checks
 
-| Test | Coverage |
-|---|---|
-| test_runtime | PWM/COM interlocks, no automatic boot output, startup/stop, UART, ADC fault latch |
-| test_g474 | Actual board policy, ADC conversion/completeness, VREFINT |
-| test_perf | Work union, nested interrupts, wrap and DWT recovery |
+Host regression covers coordinate transforms, independent three-phase RL tracking, anti-windup, duty bounds, zero calibration, complete-frame publication, fault latching, serial start/stop, and existing logging/performance behavior. Validate physical sampling windows, dead time, polarity and load capability on hardware.
 
-Host models cannot validate dead time, electrical polarity or real analog sampling. Use the changed module’s hardware method: [PWM/current/Hall/UART](06-driver-modules.md), [bus/VREF](10-bus-voltage-adc.md), [performance](12-performance-monitoring.md). Keep raw logs and experiments in local build output or the conversation, not rolling manual entries.
+For initial commissioning, secure the motor and set a hardware supply current limit. With the bridge disabled, check all six complementary outputs, trigger phase and analog settling. Confirm zero Id/Iq references, send `1`, and verify calibration and stationary zero current. Then adjust one axis at a time by 0.1 A and check measured-current convergence. A fixed angle can align the rotor or produce holding torque. Stop with `0` and disconnect motor power if vibration, increasing wrong-sign current or supply limiting occurs.
 
-For the first unloaded test, secure the motor, use a hardware-current-limited supply and prepare power disconnect. Start in STOP; check legal Hall states, zero-current inputs and bus voltage. Send `-` individually until 5%, then briefly try `1` and stop with `0`. Wait for a complete stop before `2`. Failure to start at low duty does not prove wrong phase order; do not keep increasing duty against a stalled rotor. Stop on abnormal vibration/noise or supply limiting. Record continuous direction, Hall transitions and commutation timing before changing control. Do not claim smooth tracking or load validation without evidence.
+The `CURRENT` row shows average and maximum current-control duration and the count of executions taking at least 50 µs; this time is already included in ADC3 utilization. Measure the complete ADC ISR's worst-case duration with a scope, targeting below 15 µs, and verify duty application at the next underflow. Confirm missing-frame and overcurrent faults immediately lower CTRL_SD and reject subsequent start commands. Calibrate Hall offset and interpolation after current-loop validation. Successful builds do not establish hardware acceptance.
