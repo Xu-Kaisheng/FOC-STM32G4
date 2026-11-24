@@ -21,7 +21,7 @@ VREF+ = 3.3 V 时：24 V 母线 → PB12 约 0.96 V → raw 约 1192
 |---|---|
 | ADC4 | 12 位、右对齐、单端、规则组 Rank 1 = IN3，Rank 2 = VREFINT，开启 AutoWait |
 | 采样时间 | 247.5 周期，较长建立时间用于分压链路 |
-| 时钟 | SYSCLK/4 = 42.5 MHz，ADC345 公共时钟域 |
+| 时钟 | ADC12 和 ADC345 共用 PLLP（340 MHz ÷ 8 = 42.5 MHz），ADC 异步分频为 1，符合 [ES0430 §2.7.11](https://www.st.com/resource/en/errata_sheet/es0430-stm32g471xx473xx474xx483xx484xx-device-errata-stmicroelectronics.pdf#page=18) 的并行转换条件 |
 | 触发 | 单次软件触发，禁用连续转换、DMA 和 ADC4 中断 |
 | 调度 | 上电试读一次，此后主循环每 500 ms 采一次 |
 | `bsp_adc_vbus_init()` | G474 实现内部使用 ADC4 句柄，关桥时校准，1 成功 / 0 失败；公共接口不暴露 HAL |
