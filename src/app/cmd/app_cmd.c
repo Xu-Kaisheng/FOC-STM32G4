@@ -6,6 +6,7 @@
 #include "app.h"
 #include "app_control.h"
 #include "app_log.h"
+#include "app_status.h"
 #include "perf.h"
 #include "uart.h"
 
@@ -32,6 +33,7 @@ static void handle_command(uint8_t c)
             break;
 
         case 'h':
+            app_log_set_streaming(0u);
             app_set_mode(APP_MODE_HALL_MON);
             break;
 
@@ -62,15 +64,27 @@ static void handle_command(uint8_t c)
             break;
         }
 
+        case 'p':
+            app_log_set_streaming(0u);
+            app_perf_request_report();
+            break;
+
+        case 'v':
+            app_status_toggle_stream();
+            break;
+
         case '?':
+            app_log_set_streaming(0u);
             app_log_write("\r\n-- STM32-FOC v0.1 --\r\n"
                             " 0 : stop\r\n"
                             " 1 : fixed-angle current loop\r\n"
                             " h : hall monitor\r\n");
-            // 分成两条日志，避免帮助正文超过单条格式化缓冲区而被截断。
+            // 分条打印，避免帮助正文超过单条格式化缓冲区而被截断。
             app_log_write(" +/- : Iq +-0.1 A\r\n"
                             " ]/[ : Id +-0.1 A\r\n"
                             " >/< : angle +-15 deg in STOP\r\n"
+                            " p : task/IRQ load (once)\r\n");
+            app_log_write(" v : toggle VOFA+ 50 Hz\r\n"
                             " ? : this help\r\n");
             break;
 

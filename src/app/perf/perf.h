@@ -70,10 +70,13 @@ void app_perf_init(void);
 
 /* ---------------- task ---------------- */
 
-/** @brief 由 app_task 每秒调用输出；无控制样本显示 OFF，失效后重建统计窗口。 */
+/** @brief 每轮主循环维护一秒窗口并处理单次报告请求。 */
 void app_perf_task(void);
 
 /* ---------------- read ---------------- */
+
+/** @brief 主循环滚动更新统计窗口并返回最近快照；仅在下一次更新前有效。 */
+const app_perf_snapshot_t *app_perf_update_window(void);
 
 /**
  * @brief  取出窗口快照并把窗口累加器清零（read-and-clear）
@@ -83,6 +86,11 @@ void app_perf_task(void);
  *         如果拆成"读快照 + 单独清零"两次调用，中间会插入采样而丢失计数。
  */
 uint8_t app_perf_get_snapshot(app_perf_snapshot_t *out);
+
+/* ---------------- write ---------------- */
+
+/** @brief 请求在本轮主循环输出最近一次性能快照。 */
+void app_perf_request_report(void);
 
 /* ---------------- hook ---------------- */
 

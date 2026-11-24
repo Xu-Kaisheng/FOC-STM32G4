@@ -20,6 +20,7 @@ static uint32_t s_head = 0u;
 static uint32_t s_tail = 0u;
 /* 已交给 DMA、尚未完成的字节数；完成前这些字节仍占用队列空间。 */
 static uint32_t s_pending = 0u;
+static uint8_t s_streaming;
 
 /* ---------------- internal ---------------- */
 
@@ -39,6 +40,18 @@ static uint32_t log_span(void)
     return (s_head > s_tail) ? (s_head - s_tail) : (APP_LOG_QUEUE_SIZE - s_tail);
 }
 
+/** @brief 整段入队；空间不足时保留原队列，避免截断二进制帧。 */
+static uint8_t enqueue_bytes(const uint8_t *data, uint32_t len)
+{
+    if ((data == NULL) || (len == 0u) || (len > log_free())) { return 0u; }
+    for (uint32_t i = 0u; i < len; i++)
+    {
+        s_queue[s_head] = data[i];
+        s_head = (s_head + 1u) % APP_LOG_QUEUE_SIZE;
+    }
+    return 1u;
+}
+
 /* ---------------- init ---------------- */
 
 /**
@@ -46,6 +59,7 @@ static uint32_t log_span(void)
  */
 void app_log_init(void)
 {
+    s_streaming = 0u;
     s_head = 0u;
     s_tail = 0u;
     s_pending = 0u;
@@ -84,7 +98,31 @@ void app_log_task(void)
     app_perf_end_task();
 }
 
+/* ---------------- read ---------------- */
+
+/** @brief 查询串口是否正在输出二进制波形。 */
+uint8_t app_log_is_streaming(void)
+{
+    return s_streaming;
+}
+
 /* ---------------- write ---------------- */
+
+/** @brief 切换后续输出类型，已交给 DMA 的数据按原序发完。 */
+void app_log_set_streaming(uint8_t enable)
+{
+    s_streaming = enable;
+}
+
+/** @brief 仅空队列接收新帧；串口跟不上时跳帧，避免积压过时的测量。 */
+uint8_t app_log_write_frame(const uint8_t *data, uint32_t len)
+{
+    if ((s_streaming == 0u) || (s_head != s_tail))
+    {
+        return 0u;
+    }
+    return enqueue_bytes(data, len);
+}
 
 /**
  * @brief  格式化日志并入队
@@ -94,7 +132,7 @@ void app_log_write(const char *fmt, ...)
 {
     va_list args;
     int32_t len;
-    uint32_t i;
+    if (s_streaming != 0u) { return; }
 
     va_start(args, fmt);
     // vsnprintf 保证截断，避免缓冲区越界
@@ -109,13 +147,5 @@ void app_log_write(const char *fmt, ...)
     {
         len = (int32_t)sizeof(s_log_buf) - 1;
     }
-    if ((uint32_t)len > log_free())
-    {
-        return;
-    }
-    for (i = 0u; i < (uint32_t)len; i++)
-    {
-        s_queue[s_head] = (uint8_t)s_log_buf[i];
-        s_head = (s_head + 1u) % APP_LOG_QUEUE_SIZE;
-    }
+    (void)enqueue_bytes((const uint8_t *)s_log_buf, (uint32_t)len);
 }

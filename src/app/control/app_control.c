@@ -71,6 +71,7 @@ void app_control_task(void)
         app_perf_begin_task(APP_PERF_TASK_CONTROL);
         app_control_stop();
         app_set_mode_raw(APP_MODE_STOP);
+        app_log_set_streaming(0u);
         app_log_write("[FAULT] code=%u, reset required\r\n", (unsigned)app_get_fault());
         app_perf_end_task();
     }

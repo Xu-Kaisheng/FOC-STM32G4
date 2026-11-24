@@ -164,6 +164,7 @@ static void test_reporting(void)
     app_perf_exit_irq();
     test_dwt.CYCCNT = base + TEST_HZ;
     s_tick = 1000u;
+    app_perf_request_report();
     app_perf_task();
     assert(strstr(s_log, "TASK 25.00%  IRQ 10.00%  POLL 65.00%") != NULL);
     assert(strstr(s_log, "CMD       25.00%") != NULL);
@@ -175,12 +176,14 @@ static void test_reporting(void)
     app_perf_end_control(APP_PERF_CURRENT, mark);
     test_dwt.CYCCNT = base + 2u * TEST_HZ;
     s_tick = 2000u;
+    app_perf_request_report();
     app_perf_task();
     assert(strstr(s_log, "avg=50.00us  max=50.00us  over=1") != NULL);
     s_log[0] = '\0';
     test_dwt_running = 0u;
     app_perf_init();
     s_tick += 1000u;
+    app_perf_request_report();
     app_perf_task();
     assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "TASK ") == NULL);
 }
@@ -219,6 +222,7 @@ static void test_recovery(void)
         snap.clock_hz = 123u;
         assert(app_perf_get_snapshot(&snap) == 0u && snap.clock_hz == 123u);
         s_tick = 1000u;
+        app_perf_request_report();
         app_perf_task();
         assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "TASK ") == NULL);
         assert((test_core_debug.DEMCR & CoreDebug_DEMCR_TRCENA_Msk) != 0u);
@@ -243,6 +247,7 @@ static void test_retry(void)
     {
         s_log[0] = '\0';
         s_tick += 1000u;
+        app_perf_request_report();
         app_perf_task();
         assert(strstr(s_log, "unavailable") != NULL && strstr(s_log, "TASK ") == NULL);
     }
@@ -255,6 +260,7 @@ static void test_retry(void)
     // 就绪后突然停表，即使使能位仍在，也要重建窗口再统计。
     s_tick += 1000u;
     s_log[0] = '\0';
+    app_perf_request_report();
     app_perf_task();
     assert(strstr(s_log, "unavailable") != NULL && test_primask == 0u);
     test_dwt.CYCCNT += TEST_HZ;

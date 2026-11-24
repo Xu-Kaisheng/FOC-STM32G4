@@ -4,42 +4,31 @@
 
 ## Function and definitions
 
-Accounting lives in `src/app/perf/perf.c/.h` plus `perf_print.c`; DWT register access moved down to `src/bsp/time/cycle.h` (all `static inline`), which also removes the old `bsp/uart` self-timing dependency cycle; log pumping now lives in `app/log`. It uses Cortex-M DWT CYCCNT and reports from the main loop every 1000 ms. Conversion uses runtime `SystemCoreClock`, currently 170 MHz. Initialization at the end of `app_init()` excludes startup ADC calibration from runtime windows.
-
-There is no current loop. Slow ADC diagnostics are not current control. Accounting starts after startup diagnostics. A control category reports `OFF (no samples)` when it has no calls, and execution times when active. Current capabilities and startup policy belong only to [09](09-validation-and-maintenance.md).
+After boot diagnostics the main loop saves the latest DWT accounting window every 1000 ms. Send `p` to print it once. Repeated reads within a window use the same snapshot. A request before the first window completes or after an invalid clock sample reports `[CPU] unavailable (DWT/clock/window)`. Time conversion uses the runtime `SystemCoreClock`.
 
 | Field | Meaning |
 |---|---|
-| `CPU work` | Union of marked useful work and instrumented interrupt intervals divided by total window cycles; effective workload estimate |
-| `busy` | Union duration in ms, including command 200 ms busy waits and ADC polling |
-| `poll` | Remaining window time: empty polling, scheduling checks, uncovered accounting overhead; not hardware sleep |
-| `irq` | Instrumented interrupt time; a subset of busy, do not add it again |
-| `win` | Actual window duration; blocking may extend it beyond 1000 ms |
-| `SIXSTEP n/avg/max/share` | `app_apply_step()` count, average/maximum µs, accumulated time/window; not a 20 kHz current loop |
-| `CURRENT n/avg/max/share` | Equivalent current-loop API results; no calls today, so OFF |
-| `CURRENT budget/peak/over` | 50 µs budget, maximum/budget ratio, count of durations ≥50 µs; only printed with samples |
+| `TASK` | Exclusive time spent in foreground tasks, with interrupt preemption removed |
+| `IRQ` | Time spent in interrupts, accounting for nested interrupts separately |
+| `POLL` | Empty polling, dispatch checks and unassigned time while the CPU is running |
+| `CURRENT` | Average and maximum current-loop duration and count of calls reaching 50 µs. OFF indicates an empty sample window. |
 
-**The CPU continuously polls; WFI sleep is not enabled, so physical active time is near 100%.** `work` does not include every executed instruction and is not a power estimate, RTOS idle metric, or proof of spare compute capacity. It separates instrumented useful work from empty polling to compare diagnostic/control/command workloads.
-
-Coverage includes command handling after receiving a character, six-step output, Hall-change logs, periodic ADC/log work, log-queue reclamation and DMA submission, performance formatting, and SysTick, DMA1_Channel2 and USART3 interrupts. Receive checks, empty-queue checks, DMA waits and scheduling checks fall into poll. Peripheral DMA transfer duration is not CPU work. Control elapsed time includes preemption, reflecting deadlines; its share may overlap IRQ time and must not be added to it. Six-step scheduling is not every 50 µs, so it does not use the current-loop budget. OFF means no calls in the window, not independent proof of hardware output state.
-
-`app_task()` no longer wraps the entire command/log task. `app_cmd_task()` starts accounting after receiving a character. `app_log_task()` starts only when a completed chunk needs reclaiming or queued data can be submitted while UART is idle. A HAL-rejected submission still counts as a work attempt and closes its interval. Hooks remain in the application and Core USER CODE regions; the BSP has no dependency on performance accounting.
+The two columns break down individual tasks and interrupts. For example, `LOG` measures queue reclamation and DMA submission, `STATUS` measures telemetry encoding and `PERF` includes formatting of previous reports. Polling for DMA completion and incoming characters is included in `POLL`. Control-call duration includes preemption for deadline analysis.
 
 ## Example output
 
-These values illustrate formatting, not measured hardware results:
+The values below illustrate the format.
 
 ```text
-[PERF] CPU work=0.50% busy=5.000ms poll=995.000ms irq=0.100ms win=1000.000ms
-[PERF] SIXSTEP=OFF (no samples)
-[PERF] CURRENT=OFF (no samples)
-```
-
-After a real current loop is integrated, output could look like:
-
-```text
-[PERF] CURRENT n=20000 avg=10.00us max=12.00us share=20.00%
-[PERF] CURRENT budget=50us peak=24.00% over=0
+[CPU] TASK 2.00%  IRQ 18.00%  POLL 80.00%
+  TASK        CPU    IRQ         CPU
+  CMD        0.00%   ADC3      17.00%
+  CONTROL    1.50%   TIM1       0.75%
+  HALL       0.00%   SYSTICK    0.25%
+  LOG        0.25%   USART3     0.00%
+  STATUS     0.25%   DMA_TX     0.00%
+  PERF       0.00%
+  CURRENT  avg= 8.50us  max=12.00us  over=0
 ```
 
 Average, maximum, and overruns reset each window, not only at boot. The nonblocking UART queue can drop whole messages; logs are not lossless tracing.
@@ -56,15 +45,13 @@ Average, maximum, and overruns reset each window, not only at boot. The nonblock
 | `app_perf_get_snapshot(out)` | Consume/reset one window in main loop (read-and-clear); normally owned by `app_perf_task()` |
 | `app_perf_task()` | Called each main iteration; throttled by tick; formats only in main loop |
 
-Future current control should bracket real computation and PWM-duty submission with begin/end using `APP_PERF_CURRENT`; add IRQ hooks to new ADC/timer handlers. No fake control call or PWM start was added merely to create measurements.
-
 ## Real-time limits
 
 - Interrupt hooks use cycle reads and integer accounting, without printing, floating-point division, or waiting.
 - Short PRIMASK critical sections protect nested-depth/counter updates and snapshots, restoring previous mask state. Algorithms/formatting stay outside. Measure overhead and interrupt latency; this is not zero-intrusion instrumentation.
 - Exception entry/exit and hook boundaries are not fully counted. New uninstrumented handlers would be omitted. Fatal exceptions prioritize power shutdown, not reporting.
 - Unsigned subtraction handles one wrap. DWT wraps at ~25.26 s at 170 MHz; normal windows are ~1 s. Windows exceeding 10 s are discarded to avoid false results after multiple wraps.
-- Lost DWT trace/counter enables, a stopped counter, zero cycle windows, or clock changes report `[PERF] unavailable (DWT/clock/window)`, not a false 0%. The main loop then reinitializes timing and accounting, discards the affected window, and resumes reporting from a complete new window one second later. Persistent failures retry once per second; recovery never runs in an ISR or resets the shared CYCCNT. Debugger pauses, low-power intervals, or external DWT modifications invalidate timing conclusions.
+- Lost DWT trace/counter enables, a stopped counter, zero cycle windows, or clock changes report `[CPU] unavailable (DWT/clock/window)`, not a false 0%. The main loop then reinitializes timing and accounting, discards the affected window, and resumes accounting from a complete new window one second later. Persistent failures retry once per second; recovery never runs in an ISR or resets the shared CYCCNT. Debugger pauses, low-power intervals, or external DWT modifications invalidate timing conclusions.
 - Accounting does not alter clock/pins/triggers/PWM policy/protection thresholds, and cannot replace synchronized sampling or fast protection.
 
 ## Validation
@@ -72,5 +59,5 @@ Future current control should bracket real computation and PWM-duty submission w
 1. Host tests cover union/nesting/wrap/window reset, work spanning windows, the 50 µs boundary, no samples, DWT failure, long windows, and clock changes.
    Runtime tests also exercise real `app_task()` dispatch to verify empty receive polling, command work, DMA submission, rejected submissions and reclamation-only exits. The actual interrupt source is compiled to verify DMA/USART coverage and nested SysTick union accounting. Injected test cycles are not measurements of hardware hook overhead.
 2. Rebuild G474 with zero errors/warnings. Core interrupt hooks remain in USER CODE; the Keil project includes the module.
-3. With bridge off, check one-second PERF logs and CURRENT/SIXSTEP OFF. A mode transition's 200 ms wait increases busy in its window.
+3. With the bridge off, send `p` after the first second and check for one table with `CURRENT  OFF`. After a mode change, the 200 ms bridge reset wait contributes to `CMD` in the corresponding window.
 4. Later compare GPIO markers and scope timing against maxima, measuring hook/critical-section overhead and real overrun behavior under load.

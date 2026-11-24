@@ -1,46 +1,67 @@
-/**
- * @file    app_status.c
- * @brief   周期性状态打印
+/** @file app_status.c
+ *  @brief 通过现有串口 DMA 输出 50 Hz VOFA+ JustFloat 波形。
  */
 #include "app_status.h"
-#include "app.h"
 #include "app_control.h"
 #include "app_log.h"
-#include "app_state.h"
-#include "hall.h"
+#include "board.h"
 #include "perf.h"
 
-/* ---------------- internal ---------------- */
+#include <math.h>
 
-/** @brief 打印控制 ISR 的完整快照，状态任务不触发或消费电流 ADC。 */
-static void print_status(void)
-{
-    app_control_feedback_t feedback;
-    app_control_get_feedback(&feedback);
-    app_log_write("\r\n[FOC] %-3s  fault=%u  Hall=%s\r\n",
-                  (feedback.running != 0u) ? "RUN" : "OFF", (unsigned)app_get_fault(),
-                  bsp_hall_get_state_str(bsp_hall_read()));
-    app_log_write("  Axis(A)    Actual    Target\r\n"
-                  "  Id       %+8.3f  %+8.3f\r\n"
-                  "  Iq       %+8.3f  %+8.3f\r\n",
-                  (double)feedback.foc.id, (double)feedback.id_ref,
-                  (double)feedback.foc.iq, (double)feedback.iq_ref);
-    app_log_write("  Iuvw(A)  %+8.3f  %+8.3f  %+8.3f\r\n",
-                  (double)feedback.phase.iu, (double)feedback.phase.iv, (double)feedback.phase.iw);
-}
+#define STREAM_PERIOD_MS 20u
+
+static uint32_t s_last_frame_ms;
+static uint8_t s_need_sync;
 
 /* ---------------- task ---------------- */
 
-/**
- * @brief  由 app_task 的统一 1 s 节拍调用，与性能列表连续输出
- */
+/** @brief 每 20 ms 读取最新反馈；主循环被阻塞时跳过错过的帧。 */
 void app_status_task(void)
 {
-    if ((app_get_mode() != APP_MODE_STOP) || (app_get_last_hall() == HALL_INVALID))
-    {
-        app_set_last_hall(bsp_hall_read());
-    }
+    app_control_feedback_t feedback;
+    uint32_t now, elapsed;
+
+    if (app_log_is_streaming() == 0u) { return; }
+    now = bsp_board_get_millis();
+    elapsed = now - s_last_frame_ms;
+    if (elapsed < STREAM_PERIOD_MS) { return; }
+
     app_perf_begin_task(APP_PERF_TASK_STATUS);
-    print_status();
+    s_last_frame_ms = now - (elapsed % STREAM_PERIOD_MS);
+    app_control_get_feedback(&feedback);
+    // 固定角度电流环没有速度给定或反馈；停机与校准时也没有新的电流样本。
+    const uint8_t current_valid = (uint8_t)((feedback.running != 0u) && (feedback.samples != 0u));
+    // IEEE 754 单精度正无穷在 G474 上编码为 00 00 80 7F，即 JustFloat 帧尾。
+    // 首包额外发送一个帧尾，先结束串口中已有的启动文字或命令回显。
+    const float packet[] = {
+        INFINITY,
+        current_valid ? feedback.foc.iq : NAN,
+        current_valid ? feedback.foc.id : NAN,
+        current_valid ? feedback.iq_ref : NAN,
+        app_control_get_angle(),
+        NAN, NAN,
+        INFINITY
+    };
+    const uint32_t skip = (s_need_sync != 0u) ? 0u : (uint32_t)sizeof(float);
+    if (app_log_write_frame((const uint8_t *)packet + skip, (uint32_t)sizeof(packet) - skip) != 0u)
+    {
+        s_need_sync = 0u;
+    }
     app_perf_end_task();
+}
+
+/* ---------------- write ---------------- */
+
+/** @brief 启停连续波形；开启后从新的 20 ms 周期开始。 */
+void app_status_toggle_stream(void)
+{
+    if (app_log_is_streaming() != 0u)
+    {
+        app_log_set_streaming(0u);
+        return;
+    }
+    s_last_frame_ms = bsp_board_get_millis();
+    s_need_sync = 1u;
+    app_log_set_streaming(1u);
 }

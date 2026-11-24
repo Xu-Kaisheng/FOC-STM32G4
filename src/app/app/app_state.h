@@ -2,7 +2,7 @@
  * @file    app_state.h
  * @brief   应用层共享状态的唯一持有者与访问接口
  *
- * 这里只保留各模式共享的状态：运行模式、时间戳、霍尔、ADC 可用性。
+ * 这里只保留各模式共享的状态：运行模式、霍尔、ADC 可用性。
  * 电流环参数与积分状态归 app/control，其他模块通过接口读取。
  */
 #ifndef APP_STATE_H
@@ -37,7 +37,6 @@ typedef struct
 {
     volatile app_mode_t mode;
     volatile app_fault_t fault;
-    uint32_t     last_print_ms;
     hall_state_t last_hall;
     uint8_t      adc_ready;      /* 0 锁死启动入口，直到复位 */
 } app_state_storage_t;
@@ -48,8 +47,6 @@ typedef struct
 
 /** @brief 当前模式。 */
 app_mode_t app_get_mode(void);
-/** @brief 上一次状态打印时刻，单位 ms。 */
-uint32_t app_get_last_print_ms(void);
 /** @brief 最近一次读到的霍尔状态。 */
 hall_state_t app_get_last_hall(void);
 /** @brief ADC 链路是否可用；0 时禁止开桥。 */
@@ -62,8 +59,6 @@ app_fault_t app_get_fault(void);
 
 /** @brief 设置模式（原始写入，不跑联锁；联锁入口是 app_set_mode）。 */
 void app_set_mode_raw(app_mode_t mode);
-/** @brief 记录状态打印时刻。 */
-void app_set_last_print_ms(uint32_t millis);
 /** @brief 记录最近一次霍尔状态。 */
 void app_set_last_hall(hall_state_t hall);
 /** @brief 锁存/解除 ADC 可用标志。 */

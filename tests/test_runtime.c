@@ -536,7 +536,6 @@ static void test_task_accounting(void)
     app_perf_snapshot_t snapshot;
     reset_hardware(); bsp_uart_init(); app_log_init(); app_perf_init();
     app_set_mode_raw(APP_MODE_STOP);
-    app_set_last_print_ms(s_tick);
     s_measure_cycles = 1u;
 
     // 经过真实 app_task，能发现调用方误把空接收整体包进工作区间。
@@ -613,8 +612,8 @@ static void drain_log(void)
     s_tx_capture[s_tx_length] = '\0';
 }
 
-/** @brief 每秒仅一份完整报告，毫秒回绕及环形队列回绕均不重复、不截尾。 */
-static void test_periodic_report(void)
+/** @brief 空闲时仅更新统计；跨毫秒回绕后由单字符命令读取最近一秒的报告。 */
+static void test_requested_report(void)
 {
     uint32_t base, length, tick;
     reset_hardware();
@@ -633,9 +632,9 @@ static void test_periodic_report(void)
         s_tick++;
         test_dwt.CYCCNT += SystemCoreClock / 1000u;
         app_task(); drain_log();
-        assert(strstr(s_tx_capture, "[FOC] OFF  fault=0") != NULL);
-        assert(strstr(s_tx_capture, "Axis(A)    Actual    Target") != NULL);
-        assert(strstr(s_tx_capture, "Iuvw(A)") != NULL);
+        assert(s_tx_length == 0u);
+        s_rx = 'p'; app_task(); drain_log();
+        assert(strstr(s_tx_capture, "[FOC]") == NULL);
         assert(strstr(s_tx_capture, "[CPU] TASK ") != NULL);
         assert(strstr(s_tx_capture, "IRQ         CPU") != NULL);
         assert(strstr(s_tx_capture, "CONTROL") != NULL && strstr(s_tx_capture, "TIM1") != NULL);
@@ -644,13 +643,95 @@ static void test_periodic_report(void)
         assert(strstr(s_tx_capture, "CURRENT  OFF\r\n") != NULL);
         assert(strstr(s_tx_capture, "raw=") == NULL && strstr(s_tx_capture, "VBUS") == NULL);
         assert(strstr(s_tx_capture, "VREF") == NULL);
-        assert(strstr(strstr(s_tx_capture, "[FOC]") + 1, "[FOC]") == NULL);
         assert(strstr(strstr(s_tx_capture, "[CPU]") + 1, "[CPU]") == NULL);
         length = s_tx_length;
         app_task(); app_task(); drain_log();
         assert(s_tx_length == length);
         s_tx_length = 0u;
     }
+}
+
+/** @brief 在实际 DMA 字节流中核对六个通道、无效值和固定帧尾。 */
+static void check_vofa_frame(uint32_t offset, const app_control_feedback_t *feedback)
+{
+    const uint8_t tail[] = {0x00u, 0x00u, 0x80u, 0x7fu};
+    float values[6];
+    assert(s_tx_length >= offset + sizeof(values) + sizeof(tail));
+    memcpy(values, &s_tx_capture[offset], sizeof(values));
+    assert(memcmp(&s_tx_capture[offset + sizeof(values)], tail, sizeof(tail)) == 0);
+    if (feedback == NULL)
+    {
+        assert(isnan(values[0]) && isnan(values[1]) && isnan(values[2]));
+    }
+    else
+    {
+        assert(values[0] == feedback->foc.iq && values[1] == feedback->foc.id);
+        assert(values[2] == feedback->iq_ref);
+    }
+    assert(values[3] == app_control_get_angle());
+    assert(isnan(values[4]) && isnan(values[5]));
+}
+
+/** @brief 检查开关、50 Hz 节拍、跳帧、命令与故障切回文本。 */
+static void test_vofa_stream(void)
+{
+    const uint8_t tail[] = {0x00u, 0x00u, 0x80u, 0x7fu};
+    app_control_feedback_t feedback;
+    uint32_t length;
+    reset_hardware();
+    s_tick = UINT32_MAX - 10u;
+    app_init(); drain_log(); s_tx_length = 0u;
+    s_rx = 'v'; app_task();
+    s_rx = '>'; app_task(); drain_log();
+    assert(s_tx_length == 0u && app_control_get_angle() == 15.0f);
+    s_tick += 19u; app_task(); drain_log();
+    assert(s_tx_length == 0u);
+    s_tick++; app_task(); drain_log();
+    assert(s_tx_length == 32u && memcmp(s_tx_capture, tail, sizeof(tail)) == 0);
+    check_vofa_frame(4u, NULL);
+    s_tick += 61u; app_task(); app_task(); drain_log();
+    assert(s_tx_length == 60u);
+    check_vofa_frame(32u, NULL);
+    s_tx_length = 0u;
+    for (uint32_t i = 0u; i < 50u; i++)
+    {
+        s_tick += 20u; app_task(); drain_log();
+        assert(s_tx_length == (i + 1u) * 28u);
+        check_vofa_frame(i * 28u, NULL);
+    }
+    s_rx = 'v'; app_task(); s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == 50u * 28u);
+
+    s_rx = '1'; app_task(); finish_calibration(); drain_log();
+    s_tx_length = 0u;
+    s_rx = 'v'; app_task();
+    s_rx = '+'; app_task();
+    s_tick += 20u; app_control_task();
+    sample_cycle(1554u, 1548u, 1551u);
+    app_control_get_feedback(&feedback);
+    assert(feedback.running != 0u && feedback.samples > 0u && feedback.iq_ref > 0.0f);
+    app_task(); drain_log();
+    assert(s_tx_length == 32u);
+    check_vofa_frame(4u, &feedback);
+
+    // DMA 占用时不覆盖缓冲，不补发积压帧。
+    s_tick += 20u; app_task(); app_log_task();
+    assert(s_tx_dma_busy != 0u && s_tx_length == 60u);
+    s_tick += 20u; app_task();
+    assert(s_tx_length == 60u);
+    uart_dma_finish(); drain_log();
+    assert(s_tx_length == 60u);
+    s_rx = 'p'; app_task(); drain_log();
+    assert(strstr(&s_tx_capture[60], "[CPU]") != NULL);
+    length = s_tx_length;
+    s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == length);
+
+    s_rx = 'v'; app_task(); app_control_trip_fault(APP_FAULT_OVERCURRENT);
+    app_task(); drain_log();
+    assert(strstr(&s_tx_capture[length], "[FAULT] code=2") != NULL);
+    s_tick += 40u; length = s_tx_length; app_task(); drain_log();
+    assert(s_tx_length == length && bsp_pwm_is_bridge_enabled() == 0u);
 }
 
 /** @brief 第二通道失败或采样过期时，实际应用必须关桥并锁住启动入口。 */
@@ -663,7 +744,6 @@ static void test_reference_faults(void)
         finish_calibration();
         if (scenario == 0u) { s_reference_poll = HAL_TIMEOUT; }
         else { s_reference_delay_ms = 21u; }
-        app_set_last_print_ms(s_tick);
         s_tick += 10u; app_task(); app_task();
         assert(app_get_fault() == APP_FAULT_BUS && app_get_mode() == APP_MODE_STOP);
         assert(bsp_pwm_is_bridge_enabled() == 0u);
@@ -677,7 +757,7 @@ static void test_reference_faults(void)
 int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
-    test_task_accounting(); test_irq_accounting(); test_periodic_report();
+    test_task_accounting(); test_irq_accounting(); test_requested_report(); test_vofa_stream();
     test_current_faults(); test_current_noise(); test_shutdown_race(); test_reference_faults();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;
