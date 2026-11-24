@@ -191,10 +191,12 @@ void app_perf_begin_task(app_perf_task_t task)
 }
 
 /** @brief 汇总任务独占时间，结束后恢复为无前台任务状态。 */
-void app_perf_end_task(void)
+app_perf_task_t app_perf_end_task(void)
 {
+    app_perf_task_t ended;
     uint32_t key = __get_PRIMASK();
     __disable_irq();
+    ended = s_active_task;
     if ((s_ready != 0u) && (s_active_task < APP_PERF_TASK_COUNT))
     {
         uint32_t now = bsp_cycle_get_now();
@@ -203,6 +205,7 @@ void app_perf_end_task(void)
         work_exit(now);
     }
     __set_PRIMASK(key);
+    return ended;
 }
 
 /** @brief 中断入口只记周期；外层 ISR 与被抢占的前台工作不重复计数。 */

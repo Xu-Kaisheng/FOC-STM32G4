@@ -16,7 +16,7 @@ void app_cmd_init(void);
 
 /**
  * @brief  主循环命令任务：非阻塞读一个字节，有数据就解析
- * @retval 当前有效命令；0 表示无持续输出。
+ * @retval 最近的普通命令；波形开关独立于霍尔监视等命令。
  */
 uint8_t app_cmd_task(void);
 

@@ -24,7 +24,8 @@ UART setup/wiring: [01](01-hardware-and-wiring.md). Commands are single characte
 | `]` / `[` | Increase / decrease Id reference by 0.1 A |
 | `>` / `<` | Change fixed electrical angle by ±15° while stopped, retaining the angle during operation |
 | `p` | Print one task and interrupt utilization report for the latest one-second window |
-| `v` | Start the 50 Hz VOFA+ stream, or stop it if already running |
+| `v` | Start the continuous 50 Hz VOFA+ stream. Repeating the command preserves its cadence. |
+| `c` | Stop the waveform stream |
 | `?` | Show boot diagnostics, current Hall state, latched fault code and help |
 
 | Parameter | Setting | Source |
@@ -55,7 +56,7 @@ Each 20 ms frame contains these zero-based channels.
 | 3 | `Theta_elec` | Fixed electrical angle used by the current loop, degrees in [0, 360) |
 | 4 / 5 | `Speed_ref` / `Speed_fdb` | Reserved mechanical speed target / feedback in rpm. Both transmit NaN until the speed loop is integrated. |
 
-The three current channels transmit NaN during STOP and calibration. Each valid command selects its own output. For example, sending `+` after `v` ends the stream, adjusts the current and replies with the new reference. Sending `p` prints one utilization table. Hall transitions are reported only while `h` is selected. Line endings and unknown bytes are ignored. If the main loop stalls or UART is busy, the stream skips missed frames and resumes with the latest sample.
+The three current channels transmit NaN during STOP and calibration. The stream runs until `c`. Commands such as `+` still reply normally, and the entire `p` table is one text reply. Firmware preserves the line ending, adds a newline when needed to keep the text length indivisible by four, and appends the JustFloat terminator. VOFA+ then treats the reply as a separate non-sample frame. Waveforms continue during the 200 ms bridge-off wait for a mode change, with NaN on the current channels. A full TX queue drops whole frames.
 
 ## Build and download
 

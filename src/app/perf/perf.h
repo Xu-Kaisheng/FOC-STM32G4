@@ -100,8 +100,8 @@ void app_perf_begin_work(void);
 void app_perf_end_work(void);
 /** @brief 标记前台任务有效工作；任务之间不嵌套，IRQ 抢占时间自动扣除。 */
 void app_perf_begin_task(app_perf_task_t task);
-/** @brief 结束前台任务计时，与 begin_task 配对。 */
-void app_perf_end_task(void);
+/** @brief 结束前台任务计时，返回原任务，空闲时返回 APP_PERF_TASK_COUNT。 */
+app_perf_task_t app_perf_end_task(void);
 /** @brief 在正常 ISR 的 USER CODE 入口指定来源；不用于致命异常。 */
 void app_perf_enter_irq(app_perf_irq_t source);
 /** @brief 在正常 ISR 的 USER CODE 出口调用，与入口配对。 */

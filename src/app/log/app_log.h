@@ -36,6 +36,8 @@ void app_log_task(void);
 
 /* ---------------- write ---------------- */
 
+/** @brief 结束本轮 JustFloat 文字应答；返回 0 时等队列有空间再发波形。 */
+uint8_t app_log_finish_vofa_reply(void);
 /** @brief 主循环尝试将整帧入队；返回 0 表示本帧未发送。 */
 uint8_t app_log_write_frame(const uint8_t *data, uint32_t len);
 

@@ -127,8 +127,8 @@ void app_task(void)
         }
     }
 
-    if (command == 'v') { app_status_task(); }
     app_perf_task();
+    app_status_task();
 }
 
 /* ---------------- write ---------------- */
@@ -156,7 +156,7 @@ void app_set_mode(app_mode_t mode)
     // 任何模式切换都先断电，再按新模式配置，避免带载切换
     app_control_stop();
     // 只在主循环中等待；此时桥和 PWM 都已关闭，保证重新使能前低电平足够长。
-    bsp_board_delay_ms(BRIDGE_RESET_WAIT_MS);
+    app_status_wait_with_stream(BRIDGE_RESET_WAIT_MS);
 
     app_set_mode_raw(mode);
 

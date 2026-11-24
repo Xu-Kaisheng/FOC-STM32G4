@@ -70,13 +70,12 @@ static void handle_command(uint8_t c)
             break;
 
         case 'v':
-            if (s_active_command == 'v')
-            {
-                s_active_command = 0u;
-                return;
-            }
-            app_status_start_stream();
-            break;
+            app_status_set_stream(1u);
+            return;
+
+        case 'c':
+            app_status_set_stream(0u);
+            return;
 
         case '?':
             app_print_diagnostics();
@@ -89,7 +88,7 @@ static void handle_command(uint8_t c)
                             " ]/[ : Id +-0.1 A\r\n"
                             " >/< : angle +-15 deg in STOP\r\n"
                             " p : task/IRQ load (once)\r\n");
-            app_log_write(" v : toggle VOFA+ 50 Hz\r\n"
+            app_log_write(" v : start VOFA+ 50 Hz; c : stop stream\r\n"
                             " ? : diagnostics and help\r\n");
             break;
 
@@ -106,6 +105,7 @@ static void handle_command(uint8_t c)
 void app_cmd_init(void)
 {
     s_active_command = 0u;
+    app_status_set_stream(0u);
 }
 
 /* ---------------- task ---------------- */
