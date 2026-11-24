@@ -24,6 +24,7 @@ static app_perf_irq_t s_irq_stack[APP_PERF_IRQ_COUNT];
 static uint32_t s_irq_segment, s_task_start, s_task_irq_start;
 static app_perf_task_t s_active_task = APP_PERF_TASK_COUNT;
 static uint32_t s_clock_hz, s_window_start, s_window_ms;
+static app_perf_snapshot_t s_latest;
 
 /* ---------------- internal ---------------- */
 
@@ -77,6 +78,7 @@ void app_perf_init(void)
 {
     uint32_t key = __get_PRIMASK();
     __disable_irq();
+    s_latest.elapsed_cycles = 0u;
     s_ready = 0u;
     s_work_depth = s_irq_depth = 0u;
     s_work_cycles = s_irq_cycles = 0u;
@@ -95,6 +97,17 @@ void app_perf_init(void)
 }
 
 /* ---------------- read ---------------- */
+
+/** @brief 到期后更新一秒快照，返回最近窗口；周期数为零表示暂无有效窗口。 */
+const app_perf_snapshot_t *app_perf_update_window(void)
+{
+    if (((HAL_GetTick() - s_window_ms) >= APP_PERF_REPORT_MS) &&
+        (app_perf_get_snapshot(&s_latest) == 0u))
+    {
+        app_perf_init();
+    }
+    return &s_latest;
+}
 
 /** @brief 快照与归零原子完成，窗口跨过 DWT 的一次自然回绕仍可计算。 */
 uint8_t app_perf_get_snapshot(app_perf_snapshot_t *out)
@@ -178,10 +191,12 @@ void app_perf_begin_task(app_perf_task_t task)
 }
 
 /** @brief 汇总任务独占时间，结束后恢复为无前台任务状态。 */
-void app_perf_end_task(void)
+app_perf_task_t app_perf_end_task(void)
 {
+    app_perf_task_t ended;
     uint32_t key = __get_PRIMASK();
     __disable_irq();
+    ended = s_active_task;
     if ((s_ready != 0u) && (s_active_task < APP_PERF_TASK_COUNT))
     {
         uint32_t now = bsp_cycle_get_now();
@@ -190,6 +205,7 @@ void app_perf_end_task(void)
         work_exit(now);
     }
     __set_PRIMASK(key);
+    return ended;
 }
 
 /** @brief 中断入口只记周期；外层 ISR 与被抢占的前台工作不重复计数。 */

@@ -20,6 +20,9 @@ static uint32_t s_head = 0u;
 static uint32_t s_tail = 0u;
 /* 已交给 DMA、尚未完成的字节数；完成前这些字节仍占用队列空间。 */
 static uint32_t s_pending = 0u;
+/* 0 表示没有文字；非零只保留判定浮点对齐所需的长度信息。 */
+static uint32_t s_reply_bytes;
+static uint8_t s_reply_needs_lf, s_reply_tail_pending;
 
 /* ---------------- internal ---------------- */
 
@@ -39,6 +42,18 @@ static uint32_t log_span(void)
     return (s_head > s_tail) ? (s_head - s_tail) : (APP_LOG_QUEUE_SIZE - s_tail);
 }
 
+/** @brief 整段入队；空间不足时保留原队列，避免截断二进制帧。 */
+static uint8_t enqueue_bytes(const uint8_t *data, uint32_t len)
+{
+    if ((data == NULL) || (len == 0u) || (len > log_free())) { return 0u; }
+    for (uint32_t i = 0u; i < len; i++)
+    {
+        s_queue[s_head] = data[i];
+        s_head = (s_head + 1u) % APP_LOG_QUEUE_SIZE;
+    }
+    return 1u;
+}
+
 /* ---------------- init ---------------- */
 
 /**
@@ -46,6 +61,9 @@ static uint32_t log_span(void)
  */
 void app_log_init(void)
 {
+    s_reply_bytes = 0u;
+    s_reply_needs_lf = 0u;
+    s_reply_tail_pending = 0u;
     s_head = 0u;
     s_tail = 0u;
     s_pending = 0u;
@@ -76,6 +94,7 @@ void app_log_task(void)
         s_pending = 0u;
     }
 
+    if (s_reply_tail_pending != 0u) { (void)app_log_finish_vofa_reply(); }
     len = log_span();
     if ((len != 0u) && (bsp_uart_write(&s_queue[s_tail], len) != 0u))
     {
@@ -86,6 +105,30 @@ void app_log_task(void)
 
 /* ---------------- write ---------------- */
 
+/** @brief 为本轮文字应答追加 JustFloat 帧尾，让上位机将其识别为独立的非采样帧。 */
+uint8_t app_log_finish_vofa_reply(void)
+{
+    static const uint8_t suffix[] = {'\n', '\n', 0x00u, 0x00u, 0x80u, 0x7fu};
+    uint32_t newlines = s_reply_needs_lf;
+    if (s_reply_bytes == 0u) { return 1u; }
+    // 有效采样载荷必须是 4 字节的倍数，文字已对齐时再补一个换行。
+    if (((s_reply_bytes + newlines) % sizeof(float)) == 0u) { newlines++; }
+    if (enqueue_bytes(&suffix[2u - newlines], (uint32_t)sizeof(float) + newlines) == 0u)
+    {
+        s_reply_tail_pending = 1u;
+        return 0u;
+    }
+    s_reply_tail_pending = 0u;
+    s_reply_bytes = 0u;
+    return 1u;
+}
+
+/** @brief 原子排入整帧，允许排在完整文字应答或在途 DMA 之后。 */
+uint8_t app_log_write_frame(const uint8_t *data, uint32_t len)
+{
+    return enqueue_bytes(data, len);
+}
+
 /**
  * @brief  格式化日志并入队
  * @param  fmt: printf 风格格式串
@@ -94,8 +137,9 @@ void app_log_write(const char *fmt, ...)
 {
     va_list args;
     int32_t len;
-    uint32_t i;
 
+    // 队列满时优先保证前一条应答的边界。
+    if (s_reply_tail_pending != 0u) { return; }
     va_start(args, fmt);
     // vsnprintf 保证截断，避免缓冲区越界
     len = vsnprintf(s_log_buf, sizeof(s_log_buf), fmt, args);
@@ -109,13 +153,9 @@ void app_log_write(const char *fmt, ...)
     {
         len = (int32_t)sizeof(s_log_buf) - 1;
     }
-    if ((uint32_t)len > log_free())
+    if (enqueue_bytes((const uint8_t *)s_log_buf, (uint32_t)len) != 0u)
     {
-        return;
-    }
-    for (i = 0u; i < (uint32_t)len; i++)
-    {
-        s_queue[s_head] = (uint8_t)s_log_buf[i];
-        s_head = (s_head + 1u) % APP_LOG_QUEUE_SIZE;
+        s_reply_bytes = (s_reply_bytes % (uint32_t)sizeof(float)) + (uint32_t)len;
+        s_reply_needs_lf = (uint8_t)(s_log_buf[len - 1] != '\n');
     }
 }

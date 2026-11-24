@@ -16,7 +16,7 @@
 
 /* 单条日志的最大长度（含结尾 NUL）。128 字节够打一行状态。 */
 #define APP_LOG_LINE_MAX  128u
-/* 容纳完整的 1 s 状态/性能列表及命令应答，避免列表尾部被队列丢弃。 */
+/* 容纳整份性能列表及命令应答，避免列表尾部被队列丢弃。 */
 #define APP_LOG_QUEUE_SIZE 1024u
 
 /* ---------------- init ---------------- */
@@ -35,6 +35,11 @@ void app_log_init(void);
 void app_log_task(void);
 
 /* ---------------- write ---------------- */
+
+/** @brief 结束本轮 JustFloat 文字应答；返回 0 时等队列有空间再发波形。 */
+uint8_t app_log_finish_vofa_reply(void);
+/** @brief 主循环尝试将整帧入队；返回 0 表示本帧未发送。 */
+uint8_t app_log_write_frame(const uint8_t *data, uint32_t len);
 
 /**
  * @brief  格式化日志并入队，由 app_log_task 与 DMA 后台发送

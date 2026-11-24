@@ -29,6 +29,11 @@
 /* 模式切换时保持关桥，满足驱动板过流锁存的复位等待时间。 */
 #define BRIDGE_RESET_WAIT_MS 200u
 
+/* 上电诊断留给查询命令读取，独立于运行时的保护锁存。 */
+static uint8_t s_boot_current_adc_ready;
+static const char *s_boot_vbus;
+static const char *s_boot_pwm;
+
 /* ---------------- init ---------------- */
 
 /**
@@ -39,28 +44,27 @@
 void app_init(void)
 {
     adc_vbus_sample_t vbus = {0};
-    hall_state_t hall;
+    s_boot_vbus = "OK";
+    s_boot_pwm = "skipped";
 
     bsp_uart_init();
     app_log_init();
+    app_cmd_init();
     app_control_init();
 
     bsp_pwm_init();              /* 内部会先关 CTRL_SD */
-    app_set_adc_ready(bsp_adc_cur_init());
-    if (app_get_adc_ready() == 0u)
-    {
-        app_log_write("[FATAL] ADC init failed, start disabled\r\n");
-    }
+    s_boot_current_adc_ready = bsp_adc_cur_init();
+    app_set_adc_ready(s_boot_current_adc_ready);
     if (bsp_adc_vbus_init() == 0u)
     {
         app_set_adc_ready(0u);
-        app_log_write("[FATAL] VBUS ADC init failed, start disabled\r\n");
+        s_boot_vbus = "init failed";
     }
     else if (bsp_adc_vbus_read(&vbus) == 0u)
     {
         // 启动前先验证规则组链路，避免首次状态打印之前带着采样故障开桥。
         app_set_adc_ready(0u);
-        app_log_write("[FATAL] VBUS ADC read failed, start disabled\r\n");
+        s_boot_vbus = "read failed";
     }
     bsp_hall_init();
 
@@ -77,36 +81,19 @@ void app_init(void)
         if (bsp_pwm_check_ready() == 0u)
         {
             bsp_pwm_stop();
-            app_log_write("[FATAL] PWM self-check failed (CCER/MOE/DTG), test skipped\r\n");
+            s_boot_pwm = "failed";
         }
         else
         {
-            uint32_t test_start_ms;
-
-            app_log_write("[TEST] PWM 20kHz 50%% for %u ms, bridge OFF\r\n",
-                          (unsigned)BOOT_TEST_MS);
-            // 自检等待期间继续输出日志，让示波器操作提示及时可见；功率级仍关断。
-            test_start_ms = bsp_board_get_millis();
-            while ((bsp_board_get_millis() - test_start_ms) < BOOT_TEST_MS)
-            {
-                app_log_task();
-            }
+            s_boot_pwm = "OK";
+            bsp_board_delay_ms(BOOT_TEST_MS);
             bsp_pwm_stop();
             bsp_pwm_set_duty_raw(0.0f, 0.0f, 0.0f);
-            app_log_write("[TEST] done, PWM OFF, bridge OFF\r\n");
         }
     }
 
-    hall = bsp_hall_read();
-    app_set_last_hall(hall);
-
-    app_log_write("[BOARD] %s\r\n", bsp_board_get_name());
-    app_log_write("\r\nSTM32-FOC v0.1 boot\r\n"
-                  "HALL=%s  (send '?' for help)\r\n",
-                  bsp_hall_get_state_str(hall));
     // 启动校准与自检不混入运行负载窗口。
     app_perf_init();
-    app_set_last_print_ms(bsp_board_get_millis());
 }
 
 /* ---------------- task ---------------- */
@@ -116,22 +103,19 @@ void app_init(void)
  */
 void app_task(void)
 {
-    app_mode_t mode;
-    uint32_t now;
+    uint8_t command;
 
     // 1) 日志发送：模块内部只计队列回收和发送推进，空轮询不计入工作。
     app_log_task();
 
     // 2) 串口命令：非阻塞读，读不到立即返回
-    app_cmd_task();
-
-    mode = app_get_mode();
+    command = app_cmd_task();
 
     // 3) 控制策略：维护母线输入与故障收尾，电流环由采样 ISR 推进
     app_control_task();
 
     // 4) 霍尔监视模式：只在状态变化时打印
-    if (mode == APP_MODE_HALL_MON)
+    if ((command == 'h') && (app_get_mode() == APP_MODE_HALL_MON))
     {
         hall_state_t h = bsp_hall_read();
         if (h != app_get_last_hall())
@@ -143,17 +127,20 @@ void app_task(void)
         }
     }
 
-    // 5) 共用 1 s 节拍，避免状态与性能各自定时而交错刷屏。
-    now = bsp_board_get_millis();
-    if ((now - app_get_last_print_ms()) >= APP_PERF_REPORT_MS)
-    {
-        app_set_last_print_ms(now);
-        app_status_task();
-        app_perf_task();
-    }
+    app_perf_task();
+    app_status_task();
 }
 
 /* ---------------- write ---------------- */
+
+/** @brief 应答查询命令，显示启动诊断、当前霍尔与锁存故障。 */
+void app_print_diagnostics(void)
+{
+    app_log_write("[BOARD] %s  HALL=%s\r\n", bsp_board_get_name(), bsp_hall_get_state_str(bsp_hall_read()));
+    app_log_write("[BOOT] current ADC=%s  VBUS ADC=%s  PWM test=%s\r\n",
+                  (s_boot_current_adc_ready != 0u) ? "OK" : "failed", s_boot_vbus, s_boot_pwm);
+    app_log_write("[FAULT] code=%u\r\n", (unsigned)app_get_fault());
+}
 
 /**
  * @brief  进入指定模式
@@ -169,7 +156,7 @@ void app_set_mode(app_mode_t mode)
     // 任何模式切换都先断电，再按新模式配置，避免带载切换
     app_control_stop();
     // 只在主循环中等待；此时桥和 PWM 都已关闭，保证重新使能前低电平足够长。
-    bsp_board_delay_ms(BRIDGE_RESET_WAIT_MS);
+    app_status_wait_with_stream(BRIDGE_RESET_WAIT_MS);
 
     app_set_mode_raw(mode);
 

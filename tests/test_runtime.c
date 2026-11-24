@@ -534,9 +534,8 @@ static void test_monitor_only(void)
 static void test_task_accounting(void)
 {
     app_perf_snapshot_t snapshot;
-    reset_hardware(); bsp_uart_init(); app_log_init(); app_perf_init();
+    reset_hardware(); bsp_uart_init(); app_log_init(); app_cmd_init(); app_perf_init();
     app_set_mode_raw(APP_MODE_STOP);
-    app_set_last_print_ms(s_tick);
     s_measure_cycles = 1u;
 
     // 经过真实 app_task，能发现调用方误把空接收整体包进工作区间。
@@ -613,8 +612,8 @@ static void drain_log(void)
     s_tx_capture[s_tx_length] = '\0';
 }
 
-/** @brief 每秒仅一份完整报告，毫秒回绕及环形队列回绕均不重复、不截尾。 */
-static void test_periodic_report(void)
+/** @brief 空闲时仅更新统计；跨毫秒回绕后由单字符命令读取最近一秒的报告。 */
+static void test_requested_report(void)
 {
     uint32_t base, length, tick;
     reset_hardware();
@@ -633,9 +632,9 @@ static void test_periodic_report(void)
         s_tick++;
         test_dwt.CYCCNT += SystemCoreClock / 1000u;
         app_task(); drain_log();
-        assert(strstr(s_tx_capture, "[FOC] OFF  fault=0") != NULL);
-        assert(strstr(s_tx_capture, "Axis(A)    Actual    Target") != NULL);
-        assert(strstr(s_tx_capture, "Iuvw(A)") != NULL);
+        assert(s_tx_length == 0u);
+        s_rx = 'p'; app_task(); drain_log();
+        assert(strstr(s_tx_capture, "[FOC]") == NULL);
         assert(strstr(s_tx_capture, "[CPU] TASK ") != NULL);
         assert(strstr(s_tx_capture, "IRQ         CPU") != NULL);
         assert(strstr(s_tx_capture, "CONTROL") != NULL && strstr(s_tx_capture, "TIM1") != NULL);
@@ -644,13 +643,159 @@ static void test_periodic_report(void)
         assert(strstr(s_tx_capture, "CURRENT  OFF\r\n") != NULL);
         assert(strstr(s_tx_capture, "raw=") == NULL && strstr(s_tx_capture, "VBUS") == NULL);
         assert(strstr(s_tx_capture, "VREF") == NULL);
-        assert(strstr(strstr(s_tx_capture, "[FOC]") + 1, "[FOC]") == NULL);
         assert(strstr(strstr(s_tx_capture, "[CPU]") + 1, "[CPU]") == NULL);
         length = s_tx_length;
         app_task(); app_task(); drain_log();
         assert(s_tx_length == length);
         s_tx_length = 0u;
     }
+}
+
+/** @brief 在实际 DMA 字节流中核对六个通道、无效值和固定帧尾。 */
+static void check_vofa_frame(uint32_t offset, const app_control_feedback_t *feedback)
+{
+    const uint8_t tail[] = {0x00u, 0x00u, 0x80u, 0x7fu};
+    float values[6];
+    assert(s_tx_length >= offset + sizeof(values) + sizeof(tail));
+    memcpy(values, &s_tx_capture[offset], sizeof(values));
+    assert(memcmp(&s_tx_capture[offset + sizeof(values)], tail, sizeof(tail)) == 0);
+    if (feedback == NULL)
+    {
+        assert(isnan(values[0]) && isnan(values[1]) && isnan(values[2]));
+    }
+    else
+    {
+        assert(values[0] == feedback->foc.iq && values[1] == feedback->foc.id);
+        assert(values[2] == feedback->iq_ref);
+    }
+    assert(values[3] == app_control_get_angle());
+    assert(isnan(values[4]) && isnan(values[5]));
+}
+
+/** @brief 核对完整文字应答的换行、长度和帧尾，返回下一帧的位置。 */
+static uint32_t check_vofa_reply(uint32_t offset, const char *expected)
+{
+    const uint8_t tail[] = {0x00u, 0x00u, 0x80u, 0x7fu};
+    assert(offset < s_tx_length);
+    const char *text = &s_tx_capture[offset];
+    uint32_t len = (uint32_t)strlen(text);
+    assert(offset + len + sizeof(tail) <= s_tx_length);
+    assert(strstr(text, expected) != NULL && len % 4u != 0u && text[len - 1u] == '\n');
+    assert(memcmp(&text[len], tail, sizeof(tail)) == 0);
+    return offset + len + (uint32_t)sizeof(tail);
+}
+
+/** @brief 覆盖文字长度的四种对齐及满队列延后提交帧尾。 */
+static void test_vofa_text_framing(void)
+{
+    reset_hardware(); bsp_uart_init(); app_log_init();
+    for (uint32_t len = 1u; len <= 8u; len++)
+    {
+        s_tx_length = 0u;
+        app_log_write("%.*s", (int32_t)len, "abcdefgh");
+        assert(app_log_finish_vofa_reply() != 0u);
+        drain_log();
+        assert(check_vofa_reply(0u, "a") == s_tx_length);
+    }
+    s_tx_length = 0u;
+    for (uint32_t i = 0u; i < APP_LOG_QUEUE_SIZE - 1u; i++) { app_log_write("X"); }
+    assert(app_log_finish_vofa_reply() == 0u);
+    app_log_write("DROP");
+    drain_log();
+    assert(check_vofa_reply(0u, "X") == s_tx_length && strstr(s_tx_capture, "DROP") == NULL);
+}
+
+/** @brief 验证持续波形、普通命令应答与独立的停止命令。 */
+static void test_vofa_stream(void)
+{
+    app_control_feedback_t feedback;
+    uint32_t end;
+    reset_hardware();
+    s_tick = UINT32_MAX - 10u;
+    app_init(); drain_log(); assert(s_tx_length == 0u);
+    s_rx = 'v'; app_task();
+    s_rx = '>'; app_task(); drain_log();
+    end = check_vofa_reply(0u, "[ANGLE] 15 deg");
+    s_tick += 19u; s_rx = 'v'; app_task();
+    s_rx = '\r'; app_task(); s_rx = '\n'; app_task(); s_rx = 'x'; app_task(); drain_log();
+    assert(s_tx_length == end);
+    s_tick++; app_task(); drain_log();
+    assert(s_tx_length == end + 28u);
+    check_vofa_frame(end, NULL);
+    s_tx_length = 0u;
+    s_tick += 61u; app_task(); app_task(); drain_log();
+    assert(s_tx_length == 28u);
+    for (uint32_t i = 0u; i < 50u; i++)
+    {
+        test_dwt.CYCCNT += SystemCoreClock / 50u;
+        s_tick += 20u; app_task(); drain_log();
+        assert(s_tx_length == (i + 2u) * 28u);
+        check_vofa_frame((i + 1u) * 28u, NULL);
+    }
+    s_rx = 'c'; app_task();
+    s_tick += 20u; s_rx = 'c'; app_task(); drain_log();
+    assert(s_tx_length == 51u * 28u);
+
+    // 先用文本终端启动电流环，再开波形；之前的文字也必须有明确边界。
+    s_tx_length = 0u;
+    s_rx = '1'; app_task(); finish_calibration(); drain_log();
+    s_rx = 'v'; app_task(); drain_log();
+    assert(check_vofa_reply(0u, "[MODE] FOC") == s_tx_length);
+    s_tx_length = 0u;
+    s_rx = '+'; app_task(); drain_log();
+    end = check_vofa_reply(0u, "[Iq] 0.10 A");
+    s_tick += 20u; app_control_task();
+    sample_cycle(1554u, 1548u, 1551u);
+    app_control_get_feedback(&feedback);
+    assert(feedback.running != 0u && feedback.samples > 0u && feedback.iq_ref > 0.0f);
+    app_task(); drain_log();
+    assert(s_tx_length == end + 28u);
+    check_vofa_frame(end, &feedback);
+
+    // 前一帧还在 DMA 传输时收到 p，表格和同一节拍的波形必须按顺序排队。
+    s_tx_length = 0u;
+    s_tick += 20u; app_task(); app_log_task();
+    assert(s_tx_dma_busy != 0u && s_tx_length == 28u);
+    s_tick += 20u; s_rx = 'p'; app_task();
+    assert(s_tx_length == 28u);
+    uart_dma_finish(); drain_log();
+    check_vofa_frame(0u, &feedback);
+    end = check_vofa_reply(28u, "[CPU]");
+    assert(strstr(&s_tx_capture[28], "CURRENT") != NULL);
+    assert(s_tx_length == end + 28u);
+    check_vofa_frame(end, &feedback);
+
+    app_control_trip_fault(APP_FAULT_OVERCURRENT);
+    s_tx_length = 0u;
+    s_rx = '?'; s_tick += 20u; app_task(); drain_log();
+    end = check_vofa_reply(0u, "[FAULT] code=2");
+    assert(strstr(s_tx_capture, "c : stop stream") != NULL && bsp_pwm_is_bridge_enabled() == 0u);
+    assert(s_tx_length == end + 28u);
+    check_vofa_frame(end, NULL);
+    s_tx_length = 0u;
+    s_rx = 'c'; s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == 0u);
+    s_rx = '-'; app_task(); drain_log();
+    assert(strcmp(s_tx_capture, "[Iq] 0.00 A\r\n") == 0);
+}
+
+/** @brief 在持续波形中进入霍尔监视，文字与波形在同一节拍各占一帧。 */
+static void test_hall_output_command(void)
+{
+    uint32_t end;
+    reset_hardware(); app_init();
+    s_rx = 'v'; app_task();
+    s_rx = 'h'; app_task(); drain_log();
+    // 200 ms 关桥等待中应有十个 20 ms 样本，然后才是模式切换结果。
+    for (uint32_t i = 0u; i < 10u; i++) { check_vofa_frame(i * 28u, NULL); }
+    end = check_vofa_reply(10u * 28u, "[MODE] HALL MON");
+    assert(s_tx_length == end);
+    s_tx_length = 0u;
+    test_gpioc.IDR = GPIO_PIN_8;
+    s_tick += 20u; app_task(); drain_log();
+    end = check_vofa_reply(0u, "HALL -> S1");
+    assert(s_tx_length == end + 28u);
+    check_vofa_frame(end, NULL);
 }
 
 /** @brief 第二通道失败或采样过期时，实际应用必须关桥并锁住启动入口。 */
@@ -663,7 +808,6 @@ static void test_reference_faults(void)
         finish_calibration();
         if (scenario == 0u) { s_reference_poll = HAL_TIMEOUT; }
         else { s_reference_delay_ms = 21u; }
-        app_set_last_print_ms(s_tick);
         s_tick += 10u; app_task(); app_task();
         assert(app_get_fault() == APP_FAULT_BUS && app_get_mode() == APP_MODE_STOP);
         assert(bsp_pwm_is_bridge_enabled() == 0u);
@@ -677,7 +821,8 @@ static void test_reference_faults(void)
 int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
-    test_task_accounting(); test_irq_accounting(); test_periodic_report();
+    test_task_accounting(); test_irq_accounting(); test_requested_report(); test_vofa_stream(); test_hall_output_command();
+    test_vofa_text_framing();
     test_current_faults(); test_current_noise(); test_shutdown_race(); test_reference_faults();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;

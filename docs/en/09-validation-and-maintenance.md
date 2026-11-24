@@ -23,7 +23,10 @@ UART setup/wiring: [01](01-hardware-and-wiring.md). Commands are single characte
 | `+` / `-` | Increase / decrease Iq reference by 0.1 A |
 | `]` / `[` | Increase / decrease Id reference by 0.1 A |
 | `>` / `<` | Change fixed electrical angle by ±15° while stopped, retaining the angle during operation |
-| `?` | Help |
+| `p` | Print one task and interrupt utilization report for the latest one-second window |
+| `v` | Start the continuous 50 Hz VOFA+ stream. Repeating the command preserves its cadence. |
+| `c` | Stop the waveform stream |
+| `?` | Show boot diagnostics, current Hall state, latched fault code and help |
 
 | Parameter | Setting | Source |
 |---|---|---|
@@ -40,7 +43,20 @@ References and angle survive normal stop/start cycles. Each restart ramps from z
 
 Fault codes follow `app_fault_t`. Code 1 covers ADC and zero calibration errors, 2 overcurrent, 3 PWM/modulation/computation deadlines, 4 missing frames, 5 bus/VREF faults, and 6 persistent current-sum errors. Calibration restarts its stable window after isolated spikes and is limited to 102.4 ms, with the bridge off throughout.
 
-Status and performance appear together once per second. `[FOC]` shows actual and ramped-reference Id/Iq and phase currents; raw, VBUS and VREF are omitted. STOP retains the last current snapshot, and `[FOC] OFF` indicates feedback is no longer updating during operation. `[CPU]` lists exclusive task and IRQ utilization separately; `POLL` includes polling and unassigned overhead, not sleeping idle time.
+The UART waits for a command after boot. A fault immediately disables the bridge and latches its code while the UART continues the selected output. Send `?` to read the fault code. Send `p` to display the `[CPU]` table for the most recently completed window. The first window takes one second to become available. See [performance monitoring](12-performance-monitoring.md) for the fields.
+
+In VOFA+, select **JustFloat** and **115200, 8N1**, then send lowercase `v` as text. The stream uses little-endian floats with a four-byte terminator. [JustFloat protocol](https://www.vofa.plus/docs/learning/dataengines/justfloat/)
+
+Each 20 ms frame contains these zero-based channels.
+
+| Channel | Field | Meaning |
+|---|---|---|
+| 0 / 1 | `Iq` / `Id` | Measured q / d current from the same control cycle, A |
+| 2 | `Iq_ref` | Ramped q-axis reference used in that cycle, A |
+| 3 | `Theta_elec` | Fixed electrical angle used by the current loop, degrees in [0, 360) |
+| 4 / 5 | `Speed_ref` / `Speed_fdb` | Reserved mechanical speed target / feedback in rpm. Both transmit NaN until the speed loop is integrated. |
+
+The three current channels transmit NaN during STOP and calibration. The stream runs until `c`. Commands such as `+` still reply normally, and the entire `p` table is one text reply. Firmware preserves the line ending, adds a newline when needed to keep the text length indivisible by four, and appends the JustFloat terminator. VOFA+ then treats the reply as a separate non-sample frame. Waveforms continue during the 200 ms bridge-off wait for a mode change, with NaN on the current channels. A full TX queue drops whole frames.
 
 ## Build and download
 

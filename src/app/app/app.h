@@ -27,6 +27,9 @@ void app_task(void);
 
 /* ---------------- write ---------------- */
 
+/** @brief 输出启动诊断、当前霍尔状态与运行时故障码。 */
+void app_print_diagnostics(void);
+
 /**
  * @brief  进入指定模式
  * @param  mode: 目标模式

@@ -2,7 +2,6 @@
  *  @brief 电流环启动、母线维护和故障收尾；高速计算见 app_current.c。
  */
 #include "app_control.h"
-#include "app_log.h"
 #include "board.h"
 #include "perf.h"
 #include "pwm.h"
@@ -71,7 +70,6 @@ void app_control_task(void)
         app_perf_begin_task(APP_PERF_TASK_CONTROL);
         app_control_stop();
         app_set_mode_raw(APP_MODE_STOP);
-        app_log_write("[FAULT] code=%u, reset required\r\n", (unsigned)app_get_fault());
         app_perf_end_task();
     }
     if ((s_started != 0u) &&

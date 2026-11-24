@@ -9,7 +9,6 @@
 static app_state_storage_t app_state_storage =
 {
     .mode = APP_MODE_STOP,
-    .last_print_ms = 0u,
     .last_hall = HALL_INVALID,
     .adc_ready = 0u
 };
@@ -20,12 +19,6 @@ static app_state_storage_t app_state_storage =
 app_mode_t app_get_mode(void)
 {
     return app_state_storage.mode;
-}
-
-/** @brief 上一次状态打印时刻。 */
-uint32_t app_get_last_print_ms(void)
-{
-    return app_state_storage.last_print_ms;
 }
 
 /** @brief 最近一次霍尔状态。 */
@@ -52,12 +45,6 @@ app_fault_t app_get_fault(void)
 void app_set_mode_raw(app_mode_t mode)
 {
     app_state_storage.mode = mode;
-}
-
-/** @brief 记录状态打印时刻。 */
-void app_set_last_print_ms(uint32_t millis)
-{
-    app_state_storage.last_print_ms = millis;
 }
 
 /** @brief 记录最近一次霍尔状态。 */

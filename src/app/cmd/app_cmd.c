@@ -6,12 +6,15 @@
 #include "app.h"
 #include "app_control.h"
 #include "app_log.h"
+#include "app_status.h"
 #include "perf.h"
 #include "uart.h"
 
 /* 命令每次调整的步长与显示比例；安全范围由 app_control_set_* 负责钳位。 */
 #define APP_CURRENT_STEP_A 0.1f
 #define APP_ANGLE_STEP_DEG 15.0f
+
+static uint8_t s_active_command;
 
 /* ---------------- internal ---------------- */
 
@@ -62,22 +65,47 @@ static void handle_command(uint8_t c)
             break;
         }
 
+        case 'p':
+            app_perf_request_report();
+            break;
+
+        case 'v':
+            app_status_set_stream(1u);
+            return;
+
+        case 'c':
+            app_status_set_stream(0u);
+            return;
+
         case '?':
+            app_print_diagnostics();
             app_log_write("\r\n-- STM32-FOC v0.1 --\r\n"
                             " 0 : stop\r\n"
                             " 1 : fixed-angle current loop\r\n"
                             " h : hall monitor\r\n");
-            // 分成两条日志，避免帮助正文超过单条格式化缓冲区而被截断。
+            // 分条打印，避免帮助正文超过单条格式化缓冲区而被截断。
             app_log_write(" +/- : Iq +-0.1 A\r\n"
                             " ]/[ : Id +-0.1 A\r\n"
                             " >/< : angle +-15 deg in STOP\r\n"
-                            " ? : this help\r\n");
+                            " p : task/IRQ load (once)\r\n");
+            app_log_write(" v : start VOFA+ 50 Hz; c : stop stream\r\n"
+                            " ? : diagnostics and help\r\n");
             break;
 
         default:
-            // 忽略未知字符（含回车换行）
-            break;
+            // 串口工具附加的回车换行或无效字节不会打断当前命令。
+            return;
     }
+    s_active_command = c;
+}
+
+/* ---------------- init ---------------- */
+
+/** @brief 上电后等待第一条有效命令。 */
+void app_cmd_init(void)
+{
+    s_active_command = 0u;
+    app_status_set_stream(0u);
 }
 
 /* ---------------- task ---------------- */
@@ -85,7 +113,7 @@ static void handle_command(uint8_t c)
 /**
  * @brief  主循环命令任务
  */
-void app_cmd_task(void)
+uint8_t app_cmd_task(void)
 {
     uint8_t c = 0u;
 
@@ -95,4 +123,5 @@ void app_cmd_task(void)
         handle_command(c);
         app_perf_end_task();
     }
+    return s_active_command;
 }
