@@ -19,7 +19,7 @@ The 12-bit full scale is consistently 4095, matching current scaling and ST help
 |---|---|
 | ADC4 | 12-bit, right-aligned, single-ended, regular rank 1=IN3, rank 2=VREFINT; AutoWait enabled |
 | Sampling | 247.5 cycles for divider settling |
-| Clock | SYSCLK/4=42.5 MHz, ADC345 domain |
+| Clock | ADC12 and ADC345 share PLLP (340 MHz ÷ 8 = 42.5 MHz) with an asynchronous ADC prescaler of 1, as specified for concurrent conversion in [ES0430 §2.7.11](https://www.st.com/resource/en/errata_sheet/es0430-stm32g471xx473xx474xx483xx484xx-device-errata-stmicroelectronics.pdf#page=18) |
 | Trigger | One-shot software; no continuous conversion, DMA, or ADC4 interrupt |
 | Schedule | One boot read, then every 500 ms in main loop |
 | `bsp_adc_vbus_init()` | Internal ADC4 handle; calibrate bridge-off; 1 success / 0 failure; public API has no HAL |
