@@ -25,7 +25,7 @@ UART setup/wiring: [01](01-hardware-and-wiring.md). Commands are single characte
 | `>` / `<` | Change fixed electrical angle by ±15° while stopped, retaining the angle during operation |
 | `p` | Print one task and interrupt utilization report for the latest one-second window |
 | `v` | Start the 50 Hz VOFA+ stream, or stop it if already running |
-| `?` | Help |
+| `?` | Show boot diagnostics, current Hall state, latched fault code and help |
 
 | Parameter | Setting | Source |
 |---|---|---|
@@ -42,7 +42,7 @@ References and angle survive normal stop/start cycles. Each restart ramps from z
 
 Fault codes follow `app_fault_t`. Code 1 covers ADC and zero calibration errors, 2 overcurrent, 3 PWM/modulation/computation deadlines, 4 missing frames, 5 bus/VREF faults, and 6 persistent current-sum errors. Calibration restarts its stable window after isolated spikes and is limited to 102.4 ms, with the bridge off throughout.
 
-After the boot messages, the UART is quiet by default. Startup events, faults and command replies still produce messages. Send `p` to display the `[CPU]` table for the most recently completed window. The first window takes one second to become available. See [performance monitoring](12-performance-monitoring.md) for the fields.
+The UART waits for a command after boot. A fault immediately disables the bridge and latches its code while the UART continues the selected output. Send `?` to read the fault code. Send `p` to display the `[CPU]` table for the most recently completed window. The first window takes one second to become available. See [performance monitoring](12-performance-monitoring.md) for the fields.
 
 In VOFA+, select **JustFloat** and **115200, 8N1**, then send lowercase `v` as text. The stream uses little-endian floats with a four-byte terminator. [JustFloat protocol](https://www.vofa.plus/docs/learning/dataengines/justfloat/)
 
@@ -55,7 +55,7 @@ Each 20 ms frame contains these zero-based channels.
 | 3 | `Theta_elec` | Fixed electrical angle used by the current loop, degrees in [0, 360) |
 | 4 / 5 | `Speed_ref` / `Speed_fdb` | Reserved mechanical speed target / feedback in rpm. Both transmit NaN until the speed loop is integrated. |
 
-The three current channels transmit NaN during STOP and calibration. While streaming, `+` and `-` still adjust current with text echoes suppressed. Commands `p`, `?` and `h` end the stream before producing their text. Faults and rejected starts also return to text output. If the main loop stalls or UART is busy, the stream skips missed frames and resumes with the latest sample.
+The three current channels transmit NaN during STOP and calibration. Each valid command selects its own output. For example, sending `+` after `v` ends the stream, adjusts the current and replies with the new reference. Sending `p` prints one utilization table. Hall transitions are reported only while `h` is selected. Line endings and unknown bytes are ignored. If the main loop stalls or UART is busy, the stream skips missed frames and resumes with the latest sample.
 
 ## Build and download
 

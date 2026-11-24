@@ -14,6 +14,8 @@
 #define APP_CURRENT_STEP_A 0.1f
 #define APP_ANGLE_STEP_DEG 15.0f
 
+static uint8_t s_active_command;
+
 /* ---------------- internal ---------------- */
 
 /**
@@ -33,7 +35,6 @@ static void handle_command(uint8_t c)
             break;
 
         case 'h':
-            app_log_set_streaming(0u);
             app_set_mode(APP_MODE_HALL_MON);
             break;
 
@@ -65,16 +66,20 @@ static void handle_command(uint8_t c)
         }
 
         case 'p':
-            app_log_set_streaming(0u);
             app_perf_request_report();
             break;
 
         case 'v':
-            app_status_toggle_stream();
+            if (s_active_command == 'v')
+            {
+                s_active_command = 0u;
+                return;
+            }
+            app_status_start_stream();
             break;
 
         case '?':
-            app_log_set_streaming(0u);
+            app_print_diagnostics();
             app_log_write("\r\n-- STM32-FOC v0.1 --\r\n"
                             " 0 : stop\r\n"
                             " 1 : fixed-angle current loop\r\n"
@@ -85,13 +90,22 @@ static void handle_command(uint8_t c)
                             " >/< : angle +-15 deg in STOP\r\n"
                             " p : task/IRQ load (once)\r\n");
             app_log_write(" v : toggle VOFA+ 50 Hz\r\n"
-                            " ? : this help\r\n");
+                            " ? : diagnostics and help\r\n");
             break;
 
         default:
-            // 忽略未知字符（含回车换行）
-            break;
+            // 串口工具附加的回车换行或无效字节不会打断当前命令。
+            return;
     }
+    s_active_command = c;
+}
+
+/* ---------------- init ---------------- */
+
+/** @brief 上电后等待第一条有效命令。 */
+void app_cmd_init(void)
+{
+    s_active_command = 0u;
 }
 
 /* ---------------- task ---------------- */
@@ -99,7 +113,7 @@ static void handle_command(uint8_t c)
 /**
  * @brief  主循环命令任务
  */
-void app_cmd_task(void)
+uint8_t app_cmd_task(void)
 {
     uint8_t c = 0u;
 
@@ -109,4 +123,5 @@ void app_cmd_task(void)
         handle_command(c);
         app_perf_end_task();
     }
+    return s_active_command;
 }

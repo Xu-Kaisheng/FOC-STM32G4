@@ -20,7 +20,6 @@ static uint32_t s_head = 0u;
 static uint32_t s_tail = 0u;
 /* 已交给 DMA、尚未完成的字节数；完成前这些字节仍占用队列空间。 */
 static uint32_t s_pending = 0u;
-static uint8_t s_streaming;
 
 /* ---------------- internal ---------------- */
 
@@ -59,7 +58,6 @@ static uint8_t enqueue_bytes(const uint8_t *data, uint32_t len)
  */
 void app_log_init(void)
 {
-    s_streaming = 0u;
     s_head = 0u;
     s_tail = 0u;
     s_pending = 0u;
@@ -98,26 +96,12 @@ void app_log_task(void)
     app_perf_end_task();
 }
 
-/* ---------------- read ---------------- */
-
-/** @brief 查询串口是否正在输出二进制波形。 */
-uint8_t app_log_is_streaming(void)
-{
-    return s_streaming;
-}
-
 /* ---------------- write ---------------- */
-
-/** @brief 切换后续输出类型，已交给 DMA 的数据按原序发完。 */
-void app_log_set_streaming(uint8_t enable)
-{
-    s_streaming = enable;
-}
 
 /** @brief 仅空队列接收新帧；串口跟不上时跳帧，避免积压过时的测量。 */
 uint8_t app_log_write_frame(const uint8_t *data, uint32_t len)
 {
-    if ((s_streaming == 0u) || (s_head != s_tail))
+    if (s_head != s_tail)
     {
         return 0u;
     }
@@ -132,7 +116,6 @@ void app_log_write(const char *fmt, ...)
 {
     va_list args;
     int32_t len;
-    if (s_streaming != 0u) { return; }
 
     va_start(args, fmt);
     // vsnprintf 保证截断，避免缓冲区越界

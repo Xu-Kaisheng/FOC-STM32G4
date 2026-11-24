@@ -534,7 +534,7 @@ static void test_monitor_only(void)
 static void test_task_accounting(void)
 {
     app_perf_snapshot_t snapshot;
-    reset_hardware(); bsp_uart_init(); app_log_init(); app_perf_init();
+    reset_hardware(); bsp_uart_init(); app_log_init(); app_cmd_init(); app_perf_init();
     app_set_mode_raw(APP_MODE_STOP);
     s_measure_cycles = 1u;
 
@@ -672,18 +672,24 @@ static void check_vofa_frame(uint32_t offset, const app_control_feedback_t *feed
     assert(isnan(values[4]) && isnan(values[5]));
 }
 
-/** @brief 检查开关、50 Hz 节拍、跳帧、命令与故障切回文本。 */
+/** @brief 检查开关、50 Hz 节拍、跳帧，以及故障后仅按命令输出。 */
 static void test_vofa_stream(void)
 {
     const uint8_t tail[] = {0x00u, 0x00u, 0x80u, 0x7fu};
     app_control_feedback_t feedback;
     uint32_t length;
     reset_hardware();
-    s_tick = UINT32_MAX - 10u;
-    app_init(); drain_log(); s_tx_length = 0u;
+    s_tick = UINT32_MAX - 30u;
+    app_init(); drain_log(); assert(s_tx_length == 0u);
     s_rx = 'v'; app_task();
     s_rx = '>'; app_task(); drain_log();
-    assert(s_tx_length == 0u && app_control_get_angle() == 15.0f);
+    assert(strstr(s_tx_capture, "[ANGLE] 15 deg") != NULL);
+    length = s_tx_length;
+    s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == length);
+    s_tx_length = 0u;
+    s_rx = 'v'; app_task();
+    s_rx = '\r'; app_task(); s_rx = '\n'; app_task(); s_rx = 'x'; app_task();
     s_tick += 19u; app_task(); drain_log();
     assert(s_tx_length == 0u);
     s_tick++; app_task(); drain_log();
@@ -705,7 +711,10 @@ static void test_vofa_stream(void)
     s_rx = '1'; app_task(); finish_calibration(); drain_log();
     s_tx_length = 0u;
     s_rx = 'v'; app_task();
-    s_rx = '+'; app_task();
+    s_rx = '+'; app_task(); drain_log();
+    assert(strstr(s_tx_capture, "[Iq] 0.10 A") != NULL);
+    s_tx_length = 0u;
+    s_rx = 'v'; app_task();
     s_tick += 20u; app_control_task();
     sample_cycle(1554u, 1548u, 1551u);
     app_control_get_feedback(&feedback);
@@ -729,9 +738,39 @@ static void test_vofa_stream(void)
 
     s_rx = 'v'; app_task(); app_control_trip_fault(APP_FAULT_OVERCURRENT);
     app_task(); drain_log();
-    assert(strstr(&s_tx_capture[length], "[FAULT] code=2") != NULL);
-    s_tick += 40u; length = s_tx_length; app_task(); drain_log();
     assert(s_tx_length == length && bsp_pwm_is_bridge_enabled() == 0u);
+    s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == length + 32u);
+    check_vofa_frame(length + 4u, NULL);
+    length = s_tx_length;
+    s_rx = '?'; app_task(); drain_log();
+    assert(strstr(&s_tx_capture[length], "[FAULT] code=2") != NULL);
+    length = s_tx_length;
+    s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == length);
+}
+
+/** @brief 霍尔监视与波形共用串口，下一条命令接管后只输出它所选的数据。 */
+static void test_hall_output_command(void)
+{
+    reset_hardware(); app_init(); drain_log();
+    s_rx = 'h'; app_task(); drain_log();
+    s_tx_length = 0u;
+    test_gpioc.IDR = GPIO_PIN_8;
+    app_task(); drain_log();
+    assert(strstr(s_tx_capture, "HALL -> S1") != NULL);
+    s_tx_length = 0u;
+    s_rx = 'v'; app_task();
+    test_gpioc.IDR = GPIO_PIN_7;
+    s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == 32u);
+    check_vofa_frame(4u, NULL);
+    s_rx = 'p'; app_task(); drain_log();
+    assert(strstr(&s_tx_capture[32], "[CPU]") != NULL);
+    s_tx_length = 0u;
+    test_gpioc.IDR = GPIO_PIN_8;
+    s_tick += 20u; app_task(); drain_log();
+    assert(s_tx_length == 0u);
 }
 
 /** @brief 第二通道失败或采样过期时，实际应用必须关桥并锁住启动入口。 */
@@ -757,7 +796,7 @@ static void test_reference_faults(void)
 int32_t main(void)
 {
     test_pwm(); test_hall(); test_log(); test_log_dma_error(); test_application(); test_monitor_only();
-    test_task_accounting(); test_irq_accounting(); test_requested_report(); test_vofa_stream();
+    test_task_accounting(); test_irq_accounting(); test_requested_report(); test_vofa_stream(); test_hall_output_command();
     test_current_faults(); test_current_noise(); test_shutdown_race(); test_reference_faults();
     puts("PASS: G474 PWM interlocks, Hall, log queue, application startup/fault latch");
     return 0;

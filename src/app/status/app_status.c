@@ -22,7 +22,6 @@ void app_status_task(void)
     app_control_feedback_t feedback;
     uint32_t now, elapsed;
 
-    if (app_log_is_streaming() == 0u) { return; }
     now = bsp_board_get_millis();
     elapsed = now - s_last_frame_ms;
     if (elapsed < STREAM_PERIOD_MS) { return; }
@@ -53,15 +52,9 @@ void app_status_task(void)
 
 /* ---------------- write ---------------- */
 
-/** @brief 启停连续波形；开启后从新的 20 ms 周期开始。 */
-void app_status_toggle_stream(void)
+/** @brief 收到波形命令时，从新的 20 ms 周期开始并对齐首帧。 */
+void app_status_start_stream(void)
 {
-    if (app_log_is_streaming() != 0u)
-    {
-        app_log_set_streaming(0u);
-        return;
-    }
     s_last_frame_ms = bsp_board_get_millis();
     s_need_sync = 1u;
-    app_log_set_streaming(1u);
 }

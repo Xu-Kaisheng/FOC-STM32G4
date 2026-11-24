@@ -11,7 +11,7 @@ void app_status_task(void);
 
 /* ---------------- write ---------------- */
 
-/** @brief 开启或关闭 VOFA+ JustFloat 数据流。 */
-void app_status_toggle_stream(void);
+/** @brief 按本次命令重新开始波形计时和帧同步。 */
+void app_status_start_stream(void);
 
 #endif /* APP_STATUS_H */
